@@ -14,7 +14,7 @@ import obp
 from obp.dataset import(
     linear_reward_function,
     logistic_reward_function,
-    linear_behavior_policy_logit,
+    linear_behavior_policy,
 )
 
 from obp.ope import(
@@ -26,6 +26,7 @@ from obp.ope import(
 )
 
 from dataset import SyntheticSlateBanditDataset
+from dataset import linear_behavior_policy_logit
 from plot import plot
 
 @hydra.main(config_path="../conf",config_name="config", version_base="1.1")
@@ -53,7 +54,7 @@ def main(cfg: DictConfig) -> None:
     #evaluation policy
     n_test = cfg.setting.n_test
     context = np.random.normal(size=(n_test, cfg.setting.dim_context))
-    evaluation_policy_logit = linear_behavior_policy_logit(
+    evaluation_policy_logit = linear_reward_function(
         context=context,
         action_context=np.eye(cfg.setting.n_unique_action, dtype=int),
         random_state=cfg.setting.random_state,
@@ -128,7 +129,7 @@ def main(cfg: DictConfig) -> None:
                 estimates - mean_estimates
             ) ** 2
         result_df_list.append(result_df)
-
+        print("max_iw", (evaluation_policy_pscore/ validation_bandit_data["pscore"]).max())
         tqdm.write("=====" * 15)
     
     result_df = pd.concat(result_df_list).reset_index(level=0)

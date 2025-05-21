@@ -353,7 +353,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
         if self.reward_type == "continuous":
             self.reward_min = 0
             self.reward_max = 1e10
-            self.reward_std = 1.0
+            self.reward_std = 3.0
         # one-hot encoding characterizing each action
         self.action_context = np.eye(self.n_unique_action, dtype=int)
 
@@ -568,11 +568,12 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
             evaluation_policy_softmax_ = np.exp(
                 np.minimum(evaluation_policy_logit_, clip_logit_value)
             )
-        for i in tqdm(
-            np.arange(n_rounds),
-            desc="[obtain_pscore_given_evaluation_policy_logit]",
-            total=n_rounds,
-        ):
+        # for i in tqdm(
+        #     np.arange(n_rounds),
+        #     desc="[obtain_pscore_given_evaluation_policy_logit]",
+        #     total=n_rounds,
+        # ):
+        for i in np.arange(n_rounds):
             unique_action_set = np.arange(self.n_unique_action)
             score_ = softmax(evaluation_policy_logit_[i : i + 1])[0]
             pscore_i = 1.0
@@ -689,11 +690,12 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
             behavior_policy_softmax_ = np.exp(
                 np.minimum(behavior_policy_logit_, clip_logit_value)
             )
-        for i in tqdm(
-            np.arange(n_rounds),
-            desc="[sample_action_and_obtain_pscore]",
-            total=n_rounds,
-        ):
+        # for i in tqdm(
+        #     np.arange(n_rounds),
+        #     desc="[sample_action_and_obtain_pscore]",
+        #     total=n_rounds,
+        # ):
+        for i in np.arange(n_rounds):
             unique_action_set = np.arange(self.n_unique_action)
             score_ = softmax(behavior_policy_logit_[i : i + 1, unique_action_set])[0]
             pscore_i = 1.0
@@ -735,6 +737,8 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
                                 all_slate_actions=enumerated_slate_actions,
                                 policy_logit_i_=behavior_policy_logit_[i],
                             )
+                            # print(f"{i}",behavior_policy_logit_[i,:5])
+                            # print(f"{i}",pscores[:5])
                         pscore_item_pos_i_l = pscores[
                             enumerated_slate_actions[:, pos_] == sampled_action
                         ].sum()
@@ -1082,21 +1086,23 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
         pscores = []
         n_enumerated_slate_actions = len(enumerated_slate_actions)
         if self.is_factorizable:
-            for action_list in tqdm(
-                enumerated_slate_actions,
-                desc="[calc_ground_truth_policy_value (pscore)]",
-                total=n_enumerated_slate_actions,
-            ):
+            # for action_list in tqdm(
+            #     enumerated_slate_actions,
+            #     desc="[calc_ground_truth_policy_value (pscore)]",
+            #     total=n_enumerated_slate_actions,
+            # ):
+            for action_list in enumerated_slate_actions:
                 pscores.append(
                     softmax(evaluation_policy_logit_)[:, action_list].prod(1)
                 )
             pscores = np.array(pscores).T
         else:
-            for i in tqdm(
-                np.arange(n_rounds),
-                desc="[calc_ground_truth_policy_value (pscore)]",
-                total=n_rounds,
-            ):
+            # for i in tqdm(
+            #     np.arange(n_rounds),
+            #     desc="[calc_ground_truth_policy_value (pscore)]",
+            #     total=n_rounds,
+            # ):
+            for i in np.arange(n_rounds):
                 pscores.append(
                     self._calc_pscore_given_policy_logit(
                         all_slate_actions=enumerated_slate_actions,
@@ -1132,11 +1138,12 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
             n_batch = (n_rounds - 1) // batch_size + 1
 
             policy_value = 0.0
-            for batch_idx in tqdm(
-                np.arange(n_batch),
-                desc=f"[calc_ground_truth_policy_value (expected reward), batch_size={batch_size}]",
-                total=n_batch,
-            ):
+            # for batch_idx in tqdm(
+            #     np.arange(n_batch),
+            #     desc=f"[calc_ground_truth_policy_value (expected reward), batch_size={batch_size}]",
+            #     total=n_batch,
+            # ):
+            for batch_idx in np.arange(n_batch):
                 context_ = context[
                     batch_idx * batch_size : (batch_idx + 1) * batch_size
                 ]
@@ -1501,21 +1508,23 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
         pscores = []
         n_enumerated_slate_actions = len(enumerated_slate_actions)
         if self.is_factorizable:
-            for action_list in tqdm(
-                enumerated_slate_actions,
-                desc="[calc_ground_truth_policy_value (pscore)]",
-                total=n_enumerated_slate_actions,
-            ):
+            # for action_list in tqdm(
+            #     enumerated_slate_actions,
+            #     desc="[calc_ground_truth_policy_value (pscore)]",
+            #     total=n_enumerated_slate_actions,
+            # ):
+            for action_list in enumerated_slate_actions:
                 pscores.append(
                     gen_eps_greedy(evaluation_policy_logit_, eps=eps)[:, action_list].prod(1)
                 )
             pscores = np.array(pscores).T
         else:
-            for i in tqdm(
-                np.arange(n_rounds),
-                desc="[calc_ground_truth_policy_value (pscore)]",
-                total=n_rounds,
-            ):
+            # for i in tqdm(
+            #     np.arange(n_rounds),
+            #     desc="[calc_ground_truth_policy_value (pscore)]",
+            #     total=n_rounds,
+            # ):
+            for i in np.arange(n_rounds):
                 pscores.append(
                     self._calc_pscore_given_policy_logit_epsilon_greedy(
                         all_slate_actions=enumerated_slate_actions,
@@ -1552,11 +1561,12 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
             n_batch = (n_rounds - 1) // batch_size + 1
 
             policy_value = 0.0
-            for batch_idx in tqdm(
-                np.arange(n_batch),
-                desc=f"[calc_ground_truth_policy_value (expected reward), batch_size={batch_size}]",
-                total=n_batch,
-            ):
+            # for batch_idx in tqdm(
+            #     np.arange(n_batch),
+            #     desc=f"[calc_ground_truth_policy_value (expected reward), batch_size={batch_size}]",
+            #     total=n_batch,
+            # ):
+            for batch_idx in np.arange(n_batch):
                 context_ = context[
                     batch_idx * batch_size : (batch_idx + 1) * batch_size
                 ]
@@ -1564,7 +1574,20 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
                     batch_idx * batch_size : (batch_idx + 1) * batch_size
                 ]
 
-                expected_slate_rewards_ = self.reward_function(
+                # expected_slate_rewards_ = self.reward_function(
+                #     context=context_,
+                #     action_context=self.action_context,
+                #     action=enumerated_slate_actions.flatten(),
+                #     action_interaction_weight_matrix=self.action_interaction_weight_matrix,
+                #     base_reward_function=self.base_reward_function,
+                #     reward_type=self.reward_type,
+                #     reward_structure=self.reward_structure,
+                #     len_list=self.len_list,
+                #     is_enumerated=True,
+                #     random_state=self.random_state,
+                # )
+
+                expected_reward_factual_click = self.reward_function(
                     context=context_,
                     action_context=self.action_context,
                     action=enumerated_slate_actions.flatten(),
@@ -1576,23 +1599,36 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
                     is_enumerated=True,
                     random_state=self.random_state,
                 )
+                expected_reward_factual_conversion = self.reward_function(
+                    context=context_,
+                    action_context=self.action_context,
+                    action=enumerated_slate_actions.flatten(),
+                    action_interaction_weight_matrix=self.action_interaction_weight_matrix_conversion,
+                    base_reward_function=self.base_reward_function_conversion,
+                    reward_type=self.reward_type_conversion,
+                    reward_structure=self.reward_structure_conversion,
+                    len_list=self.len_list,
+                    is_enumerated=True,
+                    random_state=self.random_state+555,
+                )
+                expected_slate_rewards_ = expected_reward_factual_click*expected_reward_factual_conversion
 
-                # click models based on expected reward
-                expected_slate_rewards_ *= self.exam_weight
-                if self.reward_type == "binary":
-                    discount_factors = np.ones(expected_slate_rewards_.shape[0])
-                    previous_slot_expected_reward = np.zeros(
-                        expected_slate_rewards_.shape[0]
-                    )
-                    for pos_ in np.arange(self.len_list):
-                        discount_factors *= (
-                            previous_slot_expected_reward * self.attractiveness[pos_]
-                            + (1 - previous_slot_expected_reward)
-                        )
-                        expected_slate_rewards_[:, pos_] = (
-                            discount_factors * expected_slate_rewards_[:, pos_]
-                        )
-                        previous_slot_expected_reward = expected_slate_rewards_[:, pos_]
+                # # click models based on expected reward
+                # expected_slate_rewards_ *= self.exam_weight
+                # if self.reward_type == "binary":
+                #     discount_factors = np.ones(expected_slate_rewards_.shape[0])
+                #     previous_slot_expected_reward = np.zeros(
+                #         expected_slate_rewards_.shape[0]
+                #     )
+                #     for pos_ in np.arange(self.len_list):
+                #         discount_factors *= (
+                #             previous_slot_expected_reward * self.attractiveness[pos_]
+                #             + (1 - previous_slot_expected_reward)
+                #         )
+                #         expected_slate_rewards_[:, pos_] = (
+                #             discount_factors * expected_slate_rewards_[:, pos_]
+                #         )
+                #         previous_slot_expected_reward = expected_slate_rewards_[:, pos_]
 
                 policy_value += (
                     pscores_.flatten() * expected_slate_rewards_.sum(axis=1)
@@ -1709,13 +1745,14 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
             evaluation_policy_softmax_ = np.exp(
                 np.minimum(evaluation_policy_logit_, clip_logit_value)
             )
-        for i in tqdm(
-            np.arange(n_rounds),
-            desc="[obtain_pscore_given_evaluation_policy_logit]",
-            total=n_rounds,
-        ):
+        # for i in tqdm(
+        #     np.arange(n_rounds),
+        #     desc="[obtain_pscore_given_evaluation_policy_logit]",
+        #     total=n_rounds,
+        # ):
+        for i in np.arange(n_rounds):
             unique_action_set = np.arange(self.n_unique_action)
-            score_ = softmax(evaluation_policy_logit_[i : i + 1])[0]
+            score_ = gen_eps_greedy(evaluation_policy_logit_[i : i + 1])[0]
             pscore_i = 1.0
             for pos_ in np.arange(self.len_list):
                 action_ = action[i * self.len_list + pos_]
@@ -1995,8 +2032,10 @@ def linear_behavior_policy_logit(
     logits = np.zeros((context.shape[0], action_context.shape[0]))
     coef_ = random_.uniform(size=context.shape[1])
     action_coef_ = random_.uniform(size=action_context.shape[1])
+    context_action_coef = random_.uniform(size=(context.shape[0], action_context.shape[0]))
     for d in np.arange(action_context.shape[0]):
-        logits[:, d] = context @ coef_ + action_context[d] @ action_coef_
+        logits[:, d] = context @ coef_ + action_context[d] @ action_coef_ 
+        logits[:,d] += context_action_coef[:,d]
 
     return logits / tau
 

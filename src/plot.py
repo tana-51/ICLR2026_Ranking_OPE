@@ -152,7 +152,7 @@ def plot(vary_list, result_df, variable_name):
     markersize=15,
     palette=palette,
     marker="o",
-    errorbar=None,
+    # errorbar=None,
     )
     # yaxis
     ax_variance.set_yscale("log")
@@ -176,7 +176,7 @@ def plot(vary_list, result_df, variable_name):
     # )
     plt.legend(legend)
     plt.savefig("test.png")
-    plt.show()
+    # plt.show()
 
     
 
