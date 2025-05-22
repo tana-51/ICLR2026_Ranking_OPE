@@ -11,9 +11,10 @@ def plot(vary_list, result_df, variable_name):
         "IPS": "tab:red",
         "IIPS": "tab:blue",
         "RIPS": "tab:purple",
+        "CIPS": "tab:green"
         }
 
-    legend = ["IPS", "IIPS","RIPS"]
+    legend = ["IPS", "IIPS","RIPS", "CIPS"]
     palette = [registered_colors[est] for est in legend]
 
 

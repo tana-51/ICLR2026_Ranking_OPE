@@ -18,7 +18,7 @@ from obp.dataset import(
 )
 
 from obp.ope import(
-    SlateOffPolicyEvaluation,
+    # SlateOffPolicyEvaluation,
     RegressionModel,
     SlateStandardIPS as IPS,
     SlateIndependentIPS as IIPS,
@@ -27,6 +27,8 @@ from obp.ope import(
 
 from dataset import SyntheticSlateBanditDataset
 from dataset import linear_behavior_policy_logit
+from estimator import ClickBasedIPS as CIPS
+from ope import OffPolicyEvaluation
 from plot import plot
 
 @hydra.main(config_path="../conf",config_name="config", version_base="1.1")
@@ -49,6 +51,8 @@ def main(cfg: DictConfig) -> None:
         random_state=cfg.setting.random_state,
         reward_type_conversion=cfg.setting.reward_type_conversion,
         reward_structure_conversion=cfg.setting.reward_structure_conversion,
+        deterministic_user_ratio=cfg.setting.deterministic_user_ratio,
+        effect_from_ranking=cfg.setting.effect_from_ranking,
     )
 
     #evaluation policy
@@ -84,18 +88,25 @@ def main(cfg: DictConfig) -> None:
                 random_state=cfg.setting.random_state,
             )
 
-            evaluation_policy_pscore, evaluation_policy_pscore_item_position, evaluation_policy_pscore_cascade = dataset.obtain_pscore_given_evaluation_policy_logit_epsilon_greedy(
+            (
+                evaluation_policy_pscore, 
+                evaluation_policy_pscore_item_position, 
+                evaluation_policy_pscore_cascade,
+                evaluation_policy_p_click, 
+            )  = dataset.obtain_pscore_given_evaluation_policy_logit_epsilon_greedy(
+                context=validation_bandit_data["context"],
                 action=validation_bandit_data["action"],
                 evaluation_policy_logit_=evaluation_policy_logit,
                 eps=cfg.setting.eps,
             )
 
-            ope = SlateOffPolicyEvaluation(
+            ope = OffPolicyEvaluation(
                 bandit_feedback=validation_bandit_data,
                 ope_estimators=[
                         IPS(estimator_name="IPS", len_list=cfg.setting.len_list), 
                         IIPS(estimator_name="IIPS", len_list=cfg.setting.len_list),  
                         RIPS(estimator_name="RIPS", len_list=cfg.setting.len_list),
+                        CIPS(estimator_name="CIPS", len_list=cfg.setting.len_list)
                     ]
             )
 
@@ -103,6 +114,8 @@ def main(cfg: DictConfig) -> None:
                 evaluation_policy_pscore=evaluation_policy_pscore,
                 evaluation_policy_pscore_item_position=evaluation_policy_pscore_item_position,
                 evaluation_policy_pscore_cascade=evaluation_policy_pscore_cascade,
+                evaluation_policy_p_click=evaluation_policy_p_click,
+                behavior_policy_p_click=validation_bandit_data["p_click_factual"],
             )
             estimated_policy_value_list.append(estimated_policy_values)
         
