@@ -424,7 +424,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
         return action_interaction_weight_matrix
 
     def _calc_pscore_given_policy_logit(
-        self, all_slate_actions: np.ndarray, policy_logit_i_: np.ndarray
+        self, all_slate_actions: np.ndarray, policy_logit_i_: np.ndarray, is_deterministic: bool=False,
     ) -> np.ndarray:
         """Calculate the propensity score of all possible slate actions given a particular policy_logit.
 
@@ -449,9 +449,14 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
             action_index = np.where(
                 unique_action_set_2d == all_slate_actions[:, pos_][:, np.newaxis]
             )[1]
-            pscores *= softmax(policy_logit_i_[unique_action_set_2d])[
-                np.arange(n_actions), action_index
-            ]
+            if is_deterministic == True:
+                pscores*= gen_eps_greedy(policy_logit_i_[unique_action_set_2d], eps=0.0)[
+                    np.arange(n_actions), action_index
+                ]
+            else:
+                pscores *= softmax(policy_logit_i_[unique_action_set_2d])[
+                    np.arange(n_actions), action_index
+                ]
             # delete actions
             if pos_ + 1 != self.len_list:
                 mask = np.ones((n_actions, self.n_unique_action - pos_))
@@ -702,9 +707,11 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
         # ):
         deterministic_idx = self.random_.choice(np.arange(n_rounds), size=int(n_rounds*self.deterministic_user_ratio), replace=False)
         for i in np.arange(n_rounds):
+            is_deterministic = False
             unique_action_set = np.arange(self.n_unique_action)
             
             if i in deterministic_idx:
+                is_deterministic = True
                 score_ = gen_eps_greedy(behavior_policy_logit_[i : i + 1, unique_action_set], eps=0.0).reshape(-1)
             else:
                 score_ = softmax(behavior_policy_logit_[i : i + 1, unique_action_set])[0]
@@ -752,6 +759,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
                                 pscores = self._calc_pscore_given_policy_logit(
                                     all_slate_actions=enumerated_slate_actions,
                                     policy_logit_i_=behavior_policy_logit_[i],
+                                    is_deterministic=is_deterministic,
                                 )
                                 # print(f"{i}",behavior_policy_logit_[i,:5])
                                 # print(f"{i, pos_}",pscores[:5])
@@ -1801,7 +1809,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
         # ):
         for i in np.arange(n_rounds):
             unique_action_set = np.arange(self.n_unique_action)
-            score_ = gen_eps_greedy(evaluation_policy_logit_[i : i + 1])[0]
+            score_ = gen_eps_greedy(evaluation_policy_logit_[i : i + 1,  unique_action_set], eps=eps)[0]
             pscore_i = 1.0
             pscores = 0
             action_for_i = np.zeros(self.len_list)
@@ -1810,6 +1818,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
                 action_index_ = np.where(unique_action_set == action_)[0][0]
                 action_for_i[pos_] = action_
                 # calculate joint pscore
+                # print(score_)
                 pscore_i *= score_[action_index_]
                 pscore_cascade[i * self.len_list + pos_] = pscore_i
                 # update the pscore given the remaining items for nonfactorizable policy
@@ -2063,6 +2072,7 @@ def action_interaction_reward_function(
         expected_reward_factual[:,:] = sigmoid(expected_reward_factual)
     else:
         expected_reward_factual *= 1 
+        # expected_reward_factual /= len_list
         # expected_reward_factual = np.clip(expected_reward_factual, 0, None)
 
     assert expected_reward_factual.shape == (
@@ -2196,6 +2206,7 @@ def action_interaction_reward_function_conversion(
         context=context, action_context=action_context, random_state=random_state
     )
     if reward_type == "binary":
+        # expected_reward = np.abs(expected_reward)
         expected_reward = logit(expected_reward)
     expected_reward_factual = np.zeros_like(action_2d, dtype="float16")
     for pos_ in np.arange(len_list):
@@ -2212,7 +2223,7 @@ def action_interaction_reward_function_conversion(
                         break
                 elif pos_ == pos2_:
                     continue
-                tmp_fixed_reward += action_interaction_weight_matrix[
+                tmp_fixed_reward += effect_from_ranking*action_interaction_weight_matrix[
                     action_2d[:, pos_], action_2d[:, pos2_]
                 ]
         else:
@@ -2235,12 +2246,14 @@ def action_interaction_reward_function_conversion(
         expected_reward_factual[:,:] = sigmoid(expected_reward_factual)
     else:
         expected_reward_factual *= 1 
+        # expected_reward_factual /= len_list
         # expected_reward_factual = np.clip(expected_reward_factual, 0, None)
 
     assert expected_reward_factual.shape == (
         action_2d.shape[0],
         len_list,
     ), f"response shape must be (n_rounds (* enumerated_slate_actions), len_list), but {expected_reward_factual.shape}"
+    
     return expected_reward_factual
 
 

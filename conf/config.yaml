@@ -2,7 +2,7 @@ defaults:
   - setting: default
 hydra:
   run:
-    dir: ./synthetic #/${setting.run_file}/${setting.behavior_policy_function}/num_data=${setting.num_data_list},n_actions=${setting.n_actions}/reward_std=${setting.reward_std},beta=${setting.beta}
+    dir: ./synthetic /${setting.run_file}/conversin=${setting.reward_type_conversion}/reward_structure=${setting.reward_structure}/reward_structure_conversion=${setting.reward_structure_conversion}/effect_from_ranking=${setting.effect_from_ranking}/len_list=${setting.len_list},n_unique_action=${setting.n_unique_action}
   sweep:
-    dir: ./synthetic #/${setting.run_file}/${setting.behavior_policy_function}/num_data=${setting.num_data_list},n_actions=${setting.n_actions}/reward_std=${setting.reward_std},beta=${setting.beta}
+    dir: ./synthetic /${setting.run_file}/conversin=${setting.reward_type_conversion}/reward_structure=${setting.reward_structure}/reward_structure_conversion=${setting.reward_structure_conversion}/effect_from_ranking=${setting.effect_from_ranking}/len_list=${setting.len_list},n_unique_action=${setting.n_unique_action}
     subdir: ./
