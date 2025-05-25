@@ -85,11 +85,19 @@ def main(cfg: DictConfig) -> None:
         #evaluation policy
         n_test = cfg.setting.n_test
         context = np.random.normal(size=(n_test, cfg.setting.dim_context))
-        evaluation_policy_logit = linear_behavior_policy_logit(
-            context=context,
-            action_context=np.eye(cfg.setting.n_unique_action, dtype=int),
-            random_state=cfg.setting.random_state,
-        )
+
+        if cfg.setting.evaluation_policy_logit == "linear_reward_function":
+            evaluation_policy_logit = linear_reward_function(
+                context=context,
+                action_context=np.eye(cfg.setting.n_unique_action, dtype=int),
+                random_state=cfg.setting.random_state,
+            )
+        else:
+            evaluation_policy_logit = linear_behavior_policy_logit(
+                context=context,
+                action_context=np.eye(cfg.setting.n_unique_action, dtype=int),
+                random_state=cfg.setting.random_state,
+            )
         pi_e_value = dataset.calc_ground_truth_policy_value_epsilon_greedy(
             context=context,
             evaluation_policy_logit_=evaluation_policy_logit,
@@ -111,12 +119,19 @@ def main(cfg: DictConfig) -> None:
             # print("pscore_cascade", validation_bandit_data["pscore_cascade"])
             # print("pscore", validation_bandit_data["pscore"])
             
-            evaluation_policy_logit = linear_behavior_policy_logit(
-                context=validation_bandit_data["context"],
-                action_context=validation_bandit_data["action_context"],
-                random_state=cfg.setting.random_state,
-            )
-
+            if cfg.setting.evaluation_policy_logit == "linear_reward_function":
+                evaluation_policy_logit = linear_reward_function(
+                    context=validation_bandit_data["context"],
+                    action_context=validation_bandit_data["action_context"],
+                    random_state=cfg.setting.random_state,
+                )
+            else:
+                evaluation_policy_logit = linear_behavior_policy_logit(
+                    context=validation_bandit_data["context"],
+                    action_context=validation_bandit_data["action_context"],
+                    random_state=cfg.setting.random_state,
+                )
+                
             (
                 evaluation_policy_pscore, 
                 evaluation_policy_pscore_item_position, 
@@ -180,7 +195,7 @@ def main(cfg: DictConfig) -> None:
     result_df.to_csv("effect_from_ranking.csv")
 
     plot(vary_list=effect_from_ranking_list, result_df=result_df, variable_name="effect_from_ranking")
-    plot_normalize(vary_list=effect_from_ranking_list, result_df=result_df, variable_name="effect_from_ranking", pi_e_value=np.abs(pi_e_value))
+    plot_normalize(vary_list=effect_from_ranking_list, result_df=result_df, variable_name="effect_from_ranking")
 
 if __name__ == "__main__":
     main()

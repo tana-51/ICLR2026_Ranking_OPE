@@ -182,8 +182,9 @@ def plot(vary_list, result_df, variable_name):
     # plt.show()
 
 
-def plot_normalize(vary_list, result_df, variable_name, pi_e_value):
+def plot_normalize(vary_list, result_df, variable_name):
 
+    pi_e_value = np.abs(result_df["pi_e_value"])
     result_df["se"] /= pi_e_value 
     result_df["bias"] /= pi_e_value 
     result_df["variance"] /= pi_e_value 

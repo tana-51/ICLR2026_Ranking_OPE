@@ -2205,6 +2205,7 @@ def action_interaction_reward_function_conversion(
     expected_reward = base_reward_function(
         context=context, action_context=action_context, random_state=random_state
     )
+    # print(expected_reward)
     if reward_type == "binary":
         # expected_reward = np.abs(expected_reward)
         expected_reward = logit(expected_reward)
