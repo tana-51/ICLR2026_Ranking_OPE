@@ -11,10 +11,13 @@ def plot(vary_list, result_df, variable_name):
         "IPS": "tab:red",
         "IIPS": "tab:blue",
         "RIPS": "tab:purple",
-        "CIPS": "tab:green"
+        "CIPS": "tab:green",
+        "CDR" : "tab:orange",
+        "CIPS (estimate)" : "tab:gray",
+        "CDR (estimate)" : "tab:brown"
         }
 
-    legend = ["IPS", "IIPS","RIPS", "CIPS"]
+    legend = ["IPS", "IIPS","RIPS", "CIPS", "CDR", "CIPS (estimate)", "CDR (estimate)"]
     palette = [registered_colors[est] for est in legend]
 
 
@@ -193,10 +196,13 @@ def plot_normalize(vary_list, result_df, variable_name):
         "IPS": "tab:red",
         "IIPS": "tab:blue",
         "RIPS": "tab:purple",
-        "CIPS": "tab:green"
+        "CIPS": "tab:green",
+        "CDR" : "tab:orange",
+        "CIPS (estimate)" : "tab:gray",
+        "CDR (estimate)" : "tab:brown"
         }
 
-    legend = ["IPS", "IIPS","RIPS", "CIPS"]
+    legend = ["IPS", "IIPS","RIPS", "CIPS", "CDR", "CIPS (estimate)", "CDR (estimate)"]
     palette = [registered_colors[est] for est in legend]
 
 

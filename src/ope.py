@@ -22,6 +22,10 @@ class OffPolicyEvaluation(SlateOffPolicyEvaluation):
         q_hat: Optional[np.ndarray] = None,
         evaluation_policy_p_click: Optional[np.ndarray] = None,
         behavior_policy_p_click: Optional[np.ndarray] = None,
+        estimated_conversion_factual: Optional[np.ndarray] = None,
+        estimated_behavior_policy_p_click: Optional[np.ndarray] = None,
+        estimated_evaluation_policy_p_click: Optional[np.ndarray] = None,
+        q_hat_by_estimated_click_model: Optional[np.ndarray] = None,
     ) -> Dict[str, float]:
         """Estimate the policy value of evaluation policy.
 
@@ -64,6 +68,10 @@ class OffPolicyEvaluation(SlateOffPolicyEvaluation):
             q_hat=q_hat,
             evaluation_policy_p_click=evaluation_policy_p_click,
             behavior_policy_p_click=behavior_policy_p_click,
+            estimated_conversion_factual=estimated_conversion_factual,
+            estimated_behavior_policy_p_click= estimated_behavior_policy_p_click,
+            estimated_evaluation_policy_p_click=estimated_evaluation_policy_p_click,
+            q_hat_by_estimated_click_model=q_hat_by_estimated_click_model,
         )
         for estimator_name, estimator in self.ope_estimators_.items():
             policy_value_dict[estimator_name] = estimator.estimate_policy_value(
@@ -81,6 +89,10 @@ class OffPolicyEvaluation(SlateOffPolicyEvaluation):
         q_hat: Optional[np.ndarray] = None,
         evaluation_policy_p_click: Optional[np.ndarray] = None,
         behavior_policy_p_click: Optional[np.ndarray] = None,
+        estimated_conversion_factual: Optional[np.ndarray] = None,
+        estimated_behavior_policy_p_click: Optional[np.ndarray] = None,
+        estimated_evaluation_policy_p_click: Optional[np.ndarray] = None,
+        q_hat_by_estimated_click_model: Optional[np.ndarray] = None,
     ) -> Dict[str, np.ndarray]:
         """Create input dictionary to estimate policy value by subclasses of `BaseSlateOffPolicyEstimator`"""
         if (
@@ -127,6 +139,10 @@ class OffPolicyEvaluation(SlateOffPolicyEvaluation):
 
         estimator_inputs["evaluation_policy_p_click"] = evaluation_policy_p_click
         estimator_inputs["behavior_policy_p_click"] = behavior_policy_p_click
-        
 
+        estimator_inputs["estimated_conversion_factual"] = estimated_conversion_factual
+        
+        estimator_inputs["estimated_behavior_policy_p_click"] = estimated_behavior_policy_p_click
+        estimator_inputs["estimated_evaluation_policy_p_click"] = estimated_evaluation_policy_p_click
+        estimator_inputs["q_hat_by_estimated_click_model"] = q_hat_by_estimated_click_model
         return estimator_inputs

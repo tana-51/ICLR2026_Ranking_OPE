@@ -9,6 +9,7 @@ from pandas import DataFrame
 from tqdm import tqdm
 import seaborn as sns
 from sklearn.neural_network import MLPRegressor
+from sklearn.neural_network import MLPClassifier
 
 import obp
 from obp.dataset import(
@@ -27,7 +28,10 @@ from obp.ope import(
 
 from dataset import SyntheticSlateBanditDataset
 from dataset import linear_behavior_policy_logit
-from estimator import ClickBasedIPS as CIPS
+from estimator import(
+    ClickBasedIPS as CIPS,
+    ClickBasedDR as CDR,
+) 
 from ope import OffPolicyEvaluation
 from plot import(
     plot,
@@ -42,7 +46,7 @@ def main(cfg: DictConfig) -> None:
     effect_from_ranking_list = cfg.setting.effect_from_ranking_list
     num_data = cfg.setting.num_data
 
-
+    
     result_df_list = []
     for effect_from_ranking in effect_from_ranking_list:
         if cfg.setting.reward_type_conversion == "continuous":
@@ -111,6 +115,7 @@ def main(cfg: DictConfig) -> None:
                 n_rounds=num_data,
                 # clip_logit_value=700.0,
             )
+            # print("pi_0_value", validation_bandit_data["reward"])
             # print("expected_reward_factual", validation_bandit_data["expected_reward_factual"])
             # print("expected_reward_factual_click", validation_bandit_data["expected_reward_factual_click"])
             # print("expected_reward_factual_conversion", validation_bandit_data["expected_reward_factual_conversion"])
@@ -143,7 +148,53 @@ def main(cfg: DictConfig) -> None:
                 evaluation_policy_logit_=evaluation_policy_logit,
                 eps=cfg.setting.eps,
             )
-            # print(evaluation_policy_pscore)
+            
+            #obtain regression model
+            click_probability_true = validation_bandit_data["expected_reward_factual_click"] 
+            ################################################
+            reg_model = RegressionModel(
+                n_actions=cfg.setting.n_unique_action, 
+                base_model=MLPRegressor(hidden_layer_sizes=(30,30,30), max_iter=3000,early_stopping=True,random_state=cfg.setting.random_state),
+            )
+            mask = (validation_bandit_data["reward_click"]==1)
+            reg_model.fit(
+                context=np.repeat(validation_bandit_data["context"], dataset.len_list, axis=0)[mask], # context; x
+                action=validation_bandit_data["action"][mask], # action; a
+                reward=validation_bandit_data["reward"][mask], # reward; r
+            )
+            # estimated_conversion (n_rounds*len_list, n_unique_actions, 1)
+            estimated_conversion = reg_model.predict(
+                context=np.repeat(validation_bandit_data["context"], dataset.len_list, axis=0)
+            )
+            # print("estimated_conversion", estimated_conversion.shape)
+            estimated_conversion_factual = estimated_conversion[np.arange(dataset.len_list*validation_bandit_data["context"].shape[0]),validation_bandit_data["action"],0]
+            # print(estimated_conversion_factual.shape)
+            estimated_CR_factual = click_probability_true * estimated_conversion_factual #true_click * estimated conversion
+            ################################################
+            ################################################
+            #estimate click probability
+            click_model=MLPClassifier(hidden_layer_sizes=(30,30,30), max_iter=3000,early_stopping=True,random_state=cfg.setting.random_state)
+            X_train = np.concatenate([validation_bandit_data["context"], validation_bandit_data["action"].reshape(-1,dataset.len_list)], axis=1)
+            y_train = validation_bandit_data["reward_click"].reshape(-1,dataset.len_list)
+            click_model.fit(
+                X=X_train, 
+                y=y_train, 
+            )
+            
+            (
+                estimated_behavior_policy_p_click, 
+                estimated_evaluation_policy_p_click
+            )  = dataset.obtain_p_click_pi_given_estimated_click_probability(
+                        context=validation_bandit_data["context"],
+                        action=validation_bandit_data["action"],
+                        click_model=click_model,
+                        evaluation_policy_logit_type=cfg.setting.evaluation_policy_logit,
+                        eps=cfg.setting.eps,
+                )
+            click_probability_factual_by_click_model = click_model.predict_proba(X_train).reshape(validation_bandit_data["action"].shape[0])
+            estimated_CR_factual_by_click_model = click_probability_factual_by_click_model * estimated_conversion_factual #true_click * estimated conversion
+
+            ################################################
 
             ope = OffPolicyEvaluation(
                 bandit_feedback=validation_bandit_data,
@@ -152,6 +203,9 @@ def main(cfg: DictConfig) -> None:
                         IIPS(estimator_name="IIPS", len_list=cfg.setting.len_list),  
                         RIPS(estimator_name="RIPS", len_list=cfg.setting.len_list),
                         CIPS(estimator_name="CIPS", len_list=cfg.setting.len_list),
+                        CDR(estimator_name="CDR", len_list=cfg.setting.len_list),
+                        CIPS(estimator_name="CIPS (estimate)", len_list=cfg.setting.len_list, use_estimated_click_model=True),
+                        CDR(estimator_name="CDR (estimate)", len_list=cfg.setting.len_list, use_estimated_click_model=True),
                     ]
             )
 
@@ -159,8 +213,13 @@ def main(cfg: DictConfig) -> None:
                 evaluation_policy_pscore=evaluation_policy_pscore,
                 evaluation_policy_pscore_item_position=evaluation_policy_pscore_item_position,
                 evaluation_policy_pscore_cascade=evaluation_policy_pscore_cascade,
-                evaluation_policy_p_click=evaluation_policy_p_click,
-                behavior_policy_p_click=validation_bandit_data["p_click_factual"],
+                evaluation_policy_p_click=evaluation_policy_p_click, #pc(x,a,pi)
+                behavior_policy_p_click=validation_bandit_data["p_click_factual_pi_0"], #pc(x,a,pi_0)
+                estimated_conversion_factual=estimated_conversion_factual, #p_r
+                q_hat=estimated_CR_factual, # q_hat
+                estimated_behavior_policy_p_click= estimated_behavior_policy_p_click,
+                estimated_evaluation_policy_p_click=estimated_evaluation_policy_p_click,
+                q_hat_by_estimated_click_model=estimated_CR_factual_by_click_model,
             )
             estimated_policy_value_list.append(estimated_policy_values)
         
