@@ -309,6 +309,7 @@ class ClickBasedDR(BaseSlateInverseProbabilityWeighting):
         evaluation_policy_pscore: np.ndarray,
         q_hat: Optional[np.ndarray] = None,
         estimated_conversion_factual: Optional[np.ndarray] = None,
+        dm_term: Optional[np.ndarray] = None,
         **kwargs,
     ) -> np.ndarray:
         """Estimate rewards for each slate and slot (position).
@@ -336,11 +337,10 @@ class ClickBasedDR(BaseSlateInverseProbabilityWeighting):
 
         """
         iw = evaluation_policy_pscore / behavior_policy_pscore
-        # print("iw", iw.shape)
         estimated_rewards = iw * (reward - q_hat) 
-        estimated_rewards += evaluation_policy_pscore*estimated_conversion_factual
-        # print("estimated_conversion_factual", estimated_conversion_factual.shape)
-        # print("estimated_rewards", estimated_rewards.shape)
+        # estimated_rewards += evaluation_policy_pscore*estimated_conversion_factual
+        estimated_rewards = np.append(estimated_rewards, dm_term)
+
         return estimated_rewards
 
     def estimate_policy_value(
@@ -355,6 +355,8 @@ class ClickBasedDR(BaseSlateInverseProbabilityWeighting):
         estimated_behavior_policy_p_click: Optional[np.ndarray] = None,
         estimated_evaluation_policy_p_click: Optional[np.ndarray] = None,
         q_hat_by_estimated_click_model: Optional[np.ndarray] = None,
+        dm_term: Optional[np.ndarray] = None,
+        dm_term_by_click_model: Optional[np.ndarray] = None,
         **kwargs,
     ) -> float:
         """Estimate the policy value of evaluation policy.
@@ -401,6 +403,7 @@ class ClickBasedDR(BaseSlateInverseProbabilityWeighting):
                     evaluation_policy_pscore=estimated_evaluation_policy_p_click,
                     q_hat=q_hat_by_estimated_click_model,
                     estimated_conversion_factual=estimated_conversion_factual,
+                    dm_term=dm_term_by_click_model,
                 ).sum()
                 / np.unique(slate_id).shape[0]
             )
@@ -413,6 +416,7 @@ class ClickBasedDR(BaseSlateInverseProbabilityWeighting):
                     evaluation_policy_pscore=evaluation_policy_p_click,
                     q_hat=q_hat,
                     estimated_conversion_factual=estimated_conversion_factual,
+                    dm_term=dm_term,
                 ).sum()
                 / np.unique(slate_id).shape[0]
             )

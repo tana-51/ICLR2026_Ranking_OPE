@@ -43,12 +43,12 @@ from plot import(
 def main(cfg: DictConfig) -> None:
     np.random.seed(cfg.setting.random_state)
     num_runs = cfg.setting.num_runs
-    deterministic_user_ratio_list = cfg.setting.deterministic_user_ratio_list
+    deterministic_user_threshold_list = cfg.setting.deterministic_user_threshold_list
     num_data = cfg.setting.num_data
 
 
     result_df_list = []
-    for deterministic_user_ratio in deterministic_user_ratio_list:
+    for deterministic_user_threshold in deterministic_user_threshold_list:
         if cfg.setting.reward_type_conversion == "continuous":
             dataset = SyntheticSlateBanditDataset(
                 n_unique_action=cfg.setting.n_unique_action,
@@ -64,7 +64,7 @@ def main(cfg: DictConfig) -> None:
                 random_state=cfg.setting.random_state,
                 reward_type_conversion=cfg.setting.reward_type_conversion,
                 reward_structure_conversion=cfg.setting.reward_structure_conversion,
-                deterministic_user_ratio=deterministic_user_ratio,
+                deterministic_user_threshold=deterministic_user_threshold,
                 effect_from_ranking=cfg.setting.effect_from_ranking,
             )
         else: #binary
@@ -82,7 +82,7 @@ def main(cfg: DictConfig) -> None:
                 random_state=cfg.setting.random_state,
                 reward_type_conversion=cfg.setting.reward_type_conversion,
                 reward_structure_conversion=cfg.setting.reward_structure_conversion,
-                deterministic_user_ratio=deterministic_user_ratio,
+                deterministic_user_threshold=deterministic_user_threshold,
                 effect_from_ranking=cfg.setting.effect_from_ranking,
             )
 
@@ -111,7 +111,7 @@ def main(cfg: DictConfig) -> None:
         print("pi_e_value", pi_e_value)
 
         estimated_policy_value_list = []
-        for _ in tqdm(range(num_runs), desc=f"deterministic_user_ratio={deterministic_user_ratio}..."):
+        for _ in tqdm(range(num_runs), desc=f"deterministic_user_threshold={deterministic_user_threshold}..."):
             validation_bandit_data = dataset.obtain_batch_bandit_feedback(
                 n_rounds=num_data,
                 # clip_logit_value=700.0,
@@ -142,6 +142,7 @@ def main(cfg: DictConfig) -> None:
                 evaluation_policy_pscore_item_position, 
                 evaluation_policy_pscore_cascade,
                 evaluation_policy_p_click, 
+                p_click_pi_e,
             )  = dataset.obtain_pscore_given_evaluation_policy_logit_epsilon_greedy(
                 context=validation_bandit_data["context"],
                 action=validation_bandit_data["action"],
@@ -166,6 +167,9 @@ def main(cfg: DictConfig) -> None:
             estimated_conversion = reg_model.predict(
                 context=np.repeat(validation_bandit_data["context"], dataset.len_list, axis=0)
             )
+            estimated_conversion_for_dm_term = reg_model.predict(
+                context=validation_bandit_data["context"]
+            )[:,:,0]
             # print("estimated_conversion", estimated_conversion.shape)
             estimated_conversion_factual = estimated_conversion[np.arange(dataset.len_list*validation_bandit_data["context"].shape[0]),validation_bandit_data["action"],0]
             # print(estimated_conversion_factual.shape)
@@ -183,7 +187,8 @@ def main(cfg: DictConfig) -> None:
             
             (
                 estimated_behavior_policy_p_click, 
-                estimated_evaluation_policy_p_click
+                estimated_evaluation_policy_p_click,
+                p_click_pi_e_by_click_model, #p_c(x,a,pi_e)
             )  = dataset.obtain_p_click_pi_given_estimated_click_probability(
                         context=validation_bandit_data["context"],
                         action=validation_bandit_data["action"],
@@ -194,6 +199,8 @@ def main(cfg: DictConfig) -> None:
             click_probability_factual_by_click_model = click_model.predict_proba(X_train).reshape(validation_bandit_data["action"].shape[0])
             estimated_CR_factual_by_click_model = click_probability_factual_by_click_model * estimated_conversion_factual #true_click * estimated conversion
 
+            dm_term = (p_click_pi_e*estimated_conversion_for_dm_term).sum()
+            dm_term_by_click_model = (p_click_pi_e_by_click_model*estimated_conversion_for_dm_term).sum()
             ################################################
 
             ope = OffPolicyEvaluation(
@@ -220,6 +227,8 @@ def main(cfg: DictConfig) -> None:
                 estimated_behavior_policy_p_click= estimated_behavior_policy_p_click,
                 estimated_evaluation_policy_p_click=estimated_evaluation_policy_p_click,
                 q_hat_by_estimated_click_model=estimated_CR_factual_by_click_model,
+                dm_term=dm_term,
+                dm_term_by_click_model=dm_term_by_click_model,
             )
             estimated_policy_value_list.append(estimated_policy_values)
         
@@ -229,7 +238,7 @@ def main(cfg: DictConfig) -> None:
             .reset_index(1)
             .rename(columns={"level_1": "est", 0: "value"})
         )
-        result_df["deterministic_user_ratio"] = deterministic_user_ratio
+        result_df["deterministic_user_threshold"] = deterministic_user_threshold
         result_df["pi_e_value"] = pi_e_value
         result_df["se"] = (result_df.value - pi_e_value) ** 2
         result_df["bias"] = 0.0
@@ -251,10 +260,10 @@ def main(cfg: DictConfig) -> None:
         tqdm.write("=====" * 15)
     
     result_df = pd.concat(result_df_list).reset_index(level=0)
-    result_df.to_csv("deterministic_user_ratio.csv")
+    result_df.to_csv("deterministic_user_threshold.csv")
 
-    plot(vary_list=deterministic_user_ratio_list, result_df=result_df, variable_name="deterministic_user_ratio")
-    plot_normalize(vary_list=deterministic_user_ratio_list, result_df=result_df, variable_name="deterministic_user_ratio")
+    plot(vary_list=deterministic_user_threshold_list, result_df=result_df, variable_name="deterministic_user_threshold")
+    plot_normalize(vary_list=deterministic_user_threshold_list, result_df=result_df, variable_name="deterministic_user_threshold")
 
 if __name__ == "__main__":
     main()

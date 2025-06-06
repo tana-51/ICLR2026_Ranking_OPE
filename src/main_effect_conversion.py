@@ -41,6 +41,9 @@ from plot import(
 
 @hydra.main(config_path="../conf",config_name="config", version_base="1.1")
 def main(cfg: DictConfig) -> None:
+    if cfg.setting.deterministic_user_threshold == "-inf":
+        cfg.setting.deterministic_user_threshold = -np.inf
+
     np.random.seed(cfg.setting.random_state)
     num_runs = cfg.setting.num_runs
     effect_from_ranking_list = cfg.setting.effect_from_ranking_list
@@ -64,7 +67,7 @@ def main(cfg: DictConfig) -> None:
                 random_state=cfg.setting.random_state,
                 reward_type_conversion=cfg.setting.reward_type_conversion,
                 reward_structure_conversion=cfg.setting.reward_structure_conversion,
-                deterministic_user_ratio=cfg.setting.deterministic_user_ratio,
+                deterministic_user_threshold=cfg.setting.deterministic_user_threshold,
                 effect_from_ranking=effect_from_ranking,
             )
         else: #binary
@@ -82,7 +85,7 @@ def main(cfg: DictConfig) -> None:
                 random_state=cfg.setting.random_state,
                 reward_type_conversion=cfg.setting.reward_type_conversion,
                 reward_structure_conversion=cfg.setting.reward_structure_conversion,
-                deterministic_user_ratio=cfg.setting.deterministic_user_ratio,
+                deterministic_user_threshold=cfg.setting.deterministic_user_threshold,
                 effect_from_ranking=effect_from_ranking,
             )
 
@@ -142,6 +145,7 @@ def main(cfg: DictConfig) -> None:
                 evaluation_policy_pscore_item_position, 
                 evaluation_policy_pscore_cascade,
                 evaluation_policy_p_click, 
+                p_click_pi_e,
             )  = dataset.obtain_pscore_given_evaluation_policy_logit_epsilon_greedy(
                 context=validation_bandit_data["context"],
                 action=validation_bandit_data["action"],
@@ -166,6 +170,9 @@ def main(cfg: DictConfig) -> None:
             estimated_conversion = reg_model.predict(
                 context=np.repeat(validation_bandit_data["context"], dataset.len_list, axis=0)
             )
+            estimated_conversion_for_dm_term = reg_model.predict(
+                context=validation_bandit_data["context"]
+            )[:,:,0]
             # print("estimated_conversion", estimated_conversion.shape)
             estimated_conversion_factual = estimated_conversion[np.arange(dataset.len_list*validation_bandit_data["context"].shape[0]),validation_bandit_data["action"],0]
             # print(estimated_conversion_factual.shape)
@@ -183,7 +190,8 @@ def main(cfg: DictConfig) -> None:
             
             (
                 estimated_behavior_policy_p_click, 
-                estimated_evaluation_policy_p_click
+                estimated_evaluation_policy_p_click,
+                p_click_pi_e_by_click_model, #p_c(x,a,pi_e)
             )  = dataset.obtain_p_click_pi_given_estimated_click_probability(
                         context=validation_bandit_data["context"],
                         action=validation_bandit_data["action"],
@@ -194,6 +202,8 @@ def main(cfg: DictConfig) -> None:
             click_probability_factual_by_click_model = click_model.predict_proba(X_train).reshape(validation_bandit_data["action"].shape[0])
             estimated_CR_factual_by_click_model = click_probability_factual_by_click_model * estimated_conversion_factual #true_click * estimated conversion
 
+            dm_term = (p_click_pi_e*estimated_conversion_for_dm_term).sum()
+            dm_term_by_click_model = (p_click_pi_e_by_click_model*estimated_conversion_for_dm_term).sum()
             ################################################
 
             ope = OffPolicyEvaluation(
@@ -220,6 +230,8 @@ def main(cfg: DictConfig) -> None:
                 estimated_behavior_policy_p_click= estimated_behavior_policy_p_click,
                 estimated_evaluation_policy_p_click=estimated_evaluation_policy_p_click,
                 q_hat_by_estimated_click_model=estimated_CR_factual_by_click_model,
+                dm_term=dm_term,
+                dm_term_by_click_model=dm_term_by_click_model,
             )
             estimated_policy_value_list.append(estimated_policy_values)
         

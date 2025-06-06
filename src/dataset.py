@@ -267,7 +267,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
     base_reward_function_conversion: Optional[
         Callable[[np.ndarray, np.ndarray], np.ndarray]
     ] = None
-    deterministic_user_ratio: float = 0.0
+    deterministic_user_threshold: float = 0.0
     effect_from_ranking: float = 0.0
 
     def __post_init__(self) -> None:
@@ -712,12 +712,11 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
         #     desc="[sample_action_and_obtain_pscore]",
         #     total=n_rounds,
         # ):
-        self.deterministic_idx = self.random_.choice(np.arange(n_rounds), size=int(n_rounds*self.deterministic_user_ratio), replace=False)
         for i in np.arange(n_rounds):
             is_deterministic = False
             unique_action_set = np.arange(self.n_unique_action)
             
-            if i in self.deterministic_idx:
+            if context[i][0] <= self.deterministic_user_threshold:
                 is_deterministic = True
                 score_ = gen_eps_greedy(behavior_policy_logit_[i : i + 1, unique_action_set], eps=0.0).reshape(-1)
             else:
@@ -743,7 +742,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
                     unique_action_set = np.delete(
                         unique_action_set, unique_action_set == sampled_action
                     )
-                    if i in self.deterministic_idx:
+                    if context[i][0] <= self.deterministic_user_threshold:
                         score_ = gen_eps_greedy(behavior_policy_logit_[i : i + 1, unique_action_set], eps=0.0).reshape(-1)
                     else:
                         score_ = softmax(behavior_policy_logit_[i : i + 1, unique_action_set])[0]
@@ -1889,8 +1888,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
             start_idx = i * self.len_list
             end_idx = start_idx + self.len_list
             pscore[start_idx:end_idx] = pscore_i
-
-        return pscore, pscore_item_position, pscore_cascade, p_click_factual
+        return pscore, pscore_item_position, pscore_cascade, p_click_factual, p_click
     
     def obtain_p_click_pi_given_estimated_click_probability(
             self,
@@ -1937,7 +1935,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
     
         for i in np.arange(n_rounds):
             is_deterministic = False
-            if i in self.deterministic_idx:
+            if context[i][0] <= self.deterministic_user_threshold:
                 is_deterministic = True
 
             pscores_pi_0 = self._calc_pscore_given_policy_logit(
@@ -1960,16 +1958,116 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
             for a in np.arange(self.n_unique_action):
                 idx = np.where(enumerated_slate_actions==a)
                 q_x_c = estimated_click_probability_i[idx]
+
                 pi_0_A_x = pscores_pi_0[idx[0]]
                 pi_e_A_x = pscores_pi_e[idx[0]]
-                
+
                 p_click_pi_0[i,a] = (pi_0_A_x*q_x_c).sum()
                 p_click_pi_e[i,a] = (pi_e_A_x*q_x_c).sum()
             
             p_click_factual_pi_0[i*self.len_list:i*self.len_list+self.len_list] = p_click_pi_0[i,action[i]]
             p_click_factual_pi_e[i*self.len_list:i*self.len_list+self.len_list] = p_click_pi_e[i,action[i]]
+
+        return p_click_factual_pi_0, p_click_factual_pi_e, p_click_pi_e
+    
+    def obtain_p_click_pi_given_noise(
+            self,
+            context: np.ndarray,
+            action: np.ndarray,
+            evaluation_policy_logit_type: str,
+            noise: float,
+            eps: float = 0.2,
+    ):
         
-        return p_click_factual_pi_0, p_click_factual_pi_e
+        if evaluation_policy_logit_type == "linear_reward_function":
+            evaluation_policy_logit_ = linear_reward_function(
+                context=context,
+                action_context=self.action_context,
+                random_state=self.random_state,
+            )
+        else:
+            evaluation_policy_logit_ = linear_behavior_policy_logit(
+                context=context,
+                action_context=self.action_context,
+                random_state=self.random_state,
+            )
+    
+        action = action.reshape((-1, self.len_list))
+        enumerated_slate_actions = [
+            _
+            for _ in permutations(
+                np.arange(self.n_unique_action), self.len_list
+            )
+        ]
+        enumerated_slate_actions = np.array(enumerated_slate_actions)
+
+        behavior_policy_logit_ = self.behavior_policy_function(
+                context=context,
+                action_context=self.action_context,
+                random_state=self.random_state,
+            )
+
+        n_rounds = context.shape[0]
+        p_click_pi_0 = np.zeros((n_rounds, self.n_unique_action))
+        p_click_pi_e = np.zeros((n_rounds, self.n_unique_action))
+        p_click_factual_pi_0 = np.zeros(n_rounds * self.len_list)
+        p_click_factual_pi_e = np.zeros(n_rounds * self.len_list)
+        click_probability_factual_by_click_model = np.zeros(n_rounds * self.len_list)
+    
+        for i in np.arange(n_rounds):
+            is_deterministic = False
+            if context[i][0] <= self.deterministic_user_threshold:
+                is_deterministic = True
+
+            pscores_pi_0 = self._calc_pscore_given_policy_logit(
+                                    all_slate_actions=enumerated_slate_actions,
+                                    policy_logit_i_=behavior_policy_logit_[i],
+                                    is_deterministic=is_deterministic,
+                                )
+            
+            pscores_pi_e = self._calc_pscore_given_policy_logit_epsilon_greedy(
+                                all_slate_actions=enumerated_slate_actions,
+                                policy_logit_i_=evaluation_policy_logit_[i],
+                                eps=eps,
+                            )
+            
+            input_context = np.repeat(context[i].reshape(1,-1), enumerated_slate_actions.shape[0], axis=0)
+            X_test = np.concatenate([input_context, enumerated_slate_actions], axis=1)
+            
+            estimated_click_probability_i = self.reward_function(
+                context=context[i].reshape(1,-1),
+                action_context=self.action_context,
+                action=enumerated_slate_actions.flatten(),
+                action_interaction_weight_matrix=self.action_interaction_weight_matrix,
+                base_reward_function=self.base_reward_function,
+                reward_type=self.reward_type,
+                reward_structure=self.reward_structure,
+                len_list=self.len_list,
+                is_enumerated=True,
+                random_state=self.random_state,
+            )
+            estimated_click_probability_i *= (np.arange(self.len_list)+1)[::-1]
+            estimated_click_probability_i += self.random_.normal(loc=0.0, scale=noise, size=estimated_click_probability_i.shape)
+            estimated_click_probability_i = sigmoid(estimated_click_probability_i)/(np.arange(self.len_list)+1)
+
+            #p_click for all unique action
+            for a in np.arange(self.n_unique_action):
+                idx = np.where(enumerated_slate_actions==a)
+                q_x_c = estimated_click_probability_i[idx]
+
+                pi_0_A_x = pscores_pi_0[idx[0]]
+                pi_e_A_x = pscores_pi_e[idx[0]]
+
+                p_click_pi_0[i,a] = (pi_0_A_x*q_x_c).sum()
+                p_click_pi_e[i,a] = (pi_e_A_x*q_x_c).sum()
+            
+            p_click_factual_pi_0[i*self.len_list:i*self.len_list+self.len_list] = p_click_pi_0[i,action[i]]
+            p_click_factual_pi_e[i*self.len_list:i*self.len_list+self.len_list] = p_click_pi_e[i,action[i]]
+            
+            index = np.all(enumerated_slate_actions==action[i], axis=1)
+            click_probability_factual_by_click_model[i*self.len_list:i*self.len_list+self.len_list] = estimated_click_probability_i[np.where(index)[0]]
+
+        return p_click_factual_pi_0, p_click_factual_pi_e, p_click_pi_e, click_probability_factual_by_click_model
 
 
 
@@ -1993,7 +2091,7 @@ def generate_symmetric_matrix(n_unique_action: int, random_state: int) -> np.nda
 
     """
     random_ = check_random_state(random_state)
-    base_matrix = random_.normal(scale=5.0, size=(n_unique_action, n_unique_action))
+    base_matrix = random_.normal(scale=0.5, size=(n_unique_action, n_unique_action))
     # base_matrix = random_.uniform(low=0.0,high=1.0, size=(n_unique_action, n_unique_action))
     symmetric_matrix = (
         np.tril(base_matrix) + np.tril(base_matrix).T - np.diag(base_matrix.diagonal())
@@ -2017,11 +2115,12 @@ def generate_symmetric_matrix_conversion(n_unique_action: int, random_state: int
 
     """
     random_ = check_random_state(random_state)
-    base_matrix = random_.normal(scale=5.0, size=(n_unique_action, n_unique_action))
-    # base_matrix = random_.uniform(low=0.0,high=0.5, size=(n_unique_action, n_unique_action))
+    # base_matrix = random_.normal(scale=0.5, size=(n_unique_action, n_unique_action))
+    base_matrix = random_.uniform(low=-1.0,high=1.0, size=(n_unique_action, n_unique_action))
     symmetric_matrix = (
         np.tril(base_matrix) + np.tril(base_matrix).T - np.diag(base_matrix.diagonal())
     )
+    # print(symmetric_matrix)
     return symmetric_matrix
 
 
@@ -2147,8 +2246,8 @@ def action_interaction_reward_function(
     expected_reward = base_reward_function(
         context=context, action_context=action_context, random_state=random_state
     )
-    if reward_type == "binary":
-        expected_reward = logit(expected_reward)
+    # if reward_type == "binary":
+    #     expected_reward = logit(expected_reward)
     expected_reward_factual = np.zeros_like(action_2d, dtype="float16")
     for pos_ in np.arange(len_list):
         tmp_fixed_reward = expected_reward[
@@ -2183,10 +2282,10 @@ def action_interaction_reward_function(
         expected_reward_factual[:, pos_] = tmp_fixed_reward
 
     if reward_type == "binary":
-        expected_reward_factual /= len_list
-        expected_reward_factual[:,:] = sigmoid(expected_reward_factual)
+        # expected_reward_factual /= len_list
+        expected_reward_factual[:,:] = sigmoid(expected_reward_factual)/(np.arange(len_list)+1)
     else:
-        expected_reward_factual *= 1 
+        expected_reward_factual /= np.arange(len_list)+1
         # expected_reward_factual /= len_list
         # expected_reward_factual = np.clip(expected_reward_factual, 0, None)
 
@@ -2359,7 +2458,7 @@ def action_interaction_reward_function_conversion(
         expected_reward_factual[:, pos_] = tmp_fixed_reward
 
     if reward_type == "binary":
-        expected_reward_factual /= len_list
+        # expected_reward_factual /= len_list
         expected_reward_factual[:,:] = sigmoid(expected_reward_factual)
     else:
         expected_reward_factual *= 1 

@@ -26,6 +26,8 @@ class OffPolicyEvaluation(SlateOffPolicyEvaluation):
         estimated_behavior_policy_p_click: Optional[np.ndarray] = None,
         estimated_evaluation_policy_p_click: Optional[np.ndarray] = None,
         q_hat_by_estimated_click_model: Optional[np.ndarray] = None,
+        dm_term: Optional[np.ndarray] = None,
+        dm_term_by_click_model: Optional[np.ndarray] = None,
     ) -> Dict[str, float]:
         """Estimate the policy value of evaluation policy.
 
@@ -72,6 +74,8 @@ class OffPolicyEvaluation(SlateOffPolicyEvaluation):
             estimated_behavior_policy_p_click= estimated_behavior_policy_p_click,
             estimated_evaluation_policy_p_click=estimated_evaluation_policy_p_click,
             q_hat_by_estimated_click_model=q_hat_by_estimated_click_model,
+            dm_term=dm_term,
+            dm_term_by_click_model=dm_term_by_click_model,
         )
         for estimator_name, estimator in self.ope_estimators_.items():
             policy_value_dict[estimator_name] = estimator.estimate_policy_value(
@@ -93,6 +97,8 @@ class OffPolicyEvaluation(SlateOffPolicyEvaluation):
         estimated_behavior_policy_p_click: Optional[np.ndarray] = None,
         estimated_evaluation_policy_p_click: Optional[np.ndarray] = None,
         q_hat_by_estimated_click_model: Optional[np.ndarray] = None,
+        dm_term: Optional[np.ndarray] = None,
+        dm_term_by_click_model: Optional[np.ndarray] = None,
     ) -> Dict[str, np.ndarray]:
         """Create input dictionary to estimate policy value by subclasses of `BaseSlateOffPolicyEstimator`"""
         if (
@@ -145,4 +151,7 @@ class OffPolicyEvaluation(SlateOffPolicyEvaluation):
         estimator_inputs["estimated_behavior_policy_p_click"] = estimated_behavior_policy_p_click
         estimator_inputs["estimated_evaluation_policy_p_click"] = estimated_evaluation_policy_p_click
         estimator_inputs["q_hat_by_estimated_click_model"] = q_hat_by_estimated_click_model
+
+        estimator_inputs["dm_term"] = dm_term
+        estimator_inputs["dm_term_by_click_model"] = dm_term_by_click_model
         return estimator_inputs

@@ -44,7 +44,8 @@ def main(cfg: DictConfig) -> None:
         cfg.setting.deterministic_user_threshold = -np.inf
     np.random.seed(cfg.setting.random_state)
     num_runs = cfg.setting.num_runs
-    num_data_list = cfg.setting.num_data_list
+    num_data = cfg.setting.num_data
+    estimation_noise_list = cfg.setting.estimation_noise_list
 
     if cfg.setting.reward_type_conversion == "continuous":
         dataset = SyntheticSlateBanditDataset(
@@ -108,9 +109,9 @@ def main(cfg: DictConfig) -> None:
     print("pi_e_value", pi_e_value)
 
     result_df_list = []
-    for num_data in num_data_list:
+    for estimation_noise in estimation_noise_list:
         estimated_policy_value_list = []
-        for _ in tqdm(range(num_runs), desc=f"num_data={num_data}..."):
+        for _ in tqdm(range(num_runs), desc=f"estimation_noise={estimation_noise}..."):
             validation_bandit_data = dataset.obtain_batch_bandit_feedback(
                 n_rounds=num_data,
                 # clip_logit_value=700.0,
@@ -172,27 +173,29 @@ def main(cfg: DictConfig) -> None:
             estimated_CR_factual = click_probability_true * estimated_conversion_factual #true_click * estimated conversion
             ################################################
             ################################################
-            #estimate click probability
-            click_model=MLPClassifier(hidden_layer_sizes=(30,30,30), max_iter=3000,early_stopping=True,random_state=cfg.setting.random_state)
-            X_train = np.concatenate([validation_bandit_data["context"], validation_bandit_data["action"].reshape(-1,dataset.len_list)], axis=1)
-            y_train = validation_bandit_data["reward_click"].reshape(-1,dataset.len_list)
-            click_model.fit(
-                X=X_train, 
-                y=y_train, 
-            )
+            # #estimate click probability
+            # click_model=MLPClassifier(hidden_layer_sizes=(30,30,30), max_iter=3000,early_stopping=True,random_state=cfg.setting.random_state)
+            # X_train = np.concatenate([validation_bandit_data["context"], validation_bandit_data["action"].reshape(-1,dataset.len_list)], axis=1)
+            # y_train = validation_bandit_data["reward_click"].reshape(-1,dataset.len_list)
+            # click_model.fit(
+            #     X=X_train, 
+            #     y=y_train, 
+            # )
             
             (
                 estimated_behavior_policy_p_click, 
                 estimated_evaluation_policy_p_click,
                 p_click_pi_e_by_click_model, #p_c(x,a,pi_e)
-            )  = dataset.obtain_p_click_pi_given_estimated_click_probability(
+                click_probability_factual_by_click_model
+            )  = dataset.obtain_p_click_pi_given_noise(
                         context=validation_bandit_data["context"],
                         action=validation_bandit_data["action"],
-                        click_model=click_model,
                         evaluation_policy_logit_type=cfg.setting.evaluation_policy_logit,
+                        noise=estimation_noise,
                         eps=cfg.setting.eps,
                 )
-            click_probability_factual_by_click_model = click_model.predict_proba(X_train).reshape(validation_bandit_data["action"].shape[0])
+
+            # click_probability_factual_by_click_model = click_model.predict_proba(X_train).reshape(validation_bandit_data["action"].shape[0])
             estimated_CR_factual_by_click_model = click_probability_factual_by_click_model * estimated_conversion_factual #true_click * estimated conversion
 
             dm_term = (p_click_pi_e*estimated_conversion_for_dm_term).sum()
@@ -234,7 +237,7 @@ def main(cfg: DictConfig) -> None:
             .reset_index(1)
             .rename(columns={"level_1": "est", 0: "value"})
         )
-        result_df["num_data"] = num_data
+        result_df["estimation_noise"] = estimation_noise
         result_df["pi_e_value"] = pi_e_value
         result_df["se"] = (result_df.value - pi_e_value) ** 2
         result_df["bias"] = 0.0
@@ -256,10 +259,11 @@ def main(cfg: DictConfig) -> None:
         tqdm.write("=====" * 15)
     
     result_df = pd.concat(result_df_list).reset_index(level=0)
-    result_df.to_csv("num_data.csv")
+    result_df.to_csv("estimation_noise.csv")
 
-    plot(vary_list=num_data_list, result_df=result_df, variable_name="num_data")
-    plot_normalize(vary_list=num_data_list, result_df=result_df, variable_name="num_data")
+
+    plot(vary_list=estimation_noise_list, result_df=result_df, variable_name="estimation_noise")
+    plot_normalize(vary_list=estimation_noise_list, result_df=result_df, variable_name="estimation_noise")
 
 if __name__ == "__main__":
     main()
