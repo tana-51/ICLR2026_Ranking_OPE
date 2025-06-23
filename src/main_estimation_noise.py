@@ -99,6 +99,7 @@ def main(cfg: DictConfig) -> None:
             context=context,
             action_context=np.eye(cfg.setting.n_unique_action, dtype=int),
             random_state=cfg.setting.random_state,
+            tau=cfg.setting.tau_pi_e,
         )
         
     pi_e_value = dataset.calc_ground_truth_policy_value_epsilon_greedy(
@@ -132,6 +133,7 @@ def main(cfg: DictConfig) -> None:
                     context=validation_bandit_data["context"],
                     action_context=validation_bandit_data["action_context"],
                     random_state=cfg.setting.random_state,
+                    tau=cfg.setting.tau_pi_e,
                 )
 
             (
@@ -164,50 +166,55 @@ def main(cfg: DictConfig) -> None:
             estimated_conversion = reg_model.predict(
                 context=np.repeat(validation_bandit_data["context"], dataset.len_list, axis=0)
             )
-            estimated_conversion_for_dm_term = reg_model.predict(
-                context=validation_bandit_data["context"]
-            )[:,:,0]
+            
+            # estimated_conversion_for_dm_term = reg_model.predict(
+            #     context=validation_bandit_data["context"]
+            # )[:,:,0]
+            estimated_conversion_for_dm_term = dataset.q_r + np.random.normal(loc=0,scale=estimation_noise, size=(dataset.q_r).shape)
             # print("estimated_conversion", estimated_conversion.shape)
-            estimated_conversion_factual = estimated_conversion[np.arange(dataset.len_list*validation_bandit_data["context"].shape[0]),validation_bandit_data["action"],0]
+            # estimated_conversion_factual = estimated_conversion[np.arange(dataset.len_list*validation_bandit_data["context"].shape[0]),validation_bandit_data["action"],0]
+            estimated_conversion_factual = validation_bandit_data["expected_reward_factual_conversion"] 
+            estimated_conversion_factual += + np.random.normal(loc=0,scale=estimation_noise, size=estimated_conversion_factual.shape)
             # print(estimated_conversion_factual.shape)
             estimated_CR_factual = click_probability_true * estimated_conversion_factual #true_click * estimated conversion
             ################################################
             ################################################
-            # #estimate click probability
-            # click_model=MLPClassifier(hidden_layer_sizes=(30,30,30), max_iter=3000,early_stopping=True,random_state=cfg.setting.random_state)
-            # X_train = np.concatenate([validation_bandit_data["context"], validation_bandit_data["action"].reshape(-1,dataset.len_list)], axis=1)
-            # y_train = validation_bandit_data["reward_click"].reshape(-1,dataset.len_list)
-            # click_model.fit(
-            #     X=X_train, 
-            #     y=y_train, 
-            # )
+            #estimate click probability
+            click_model=MLPClassifier(hidden_layer_sizes=(30,30,30), max_iter=3000,early_stopping=True,random_state=cfg.setting.random_state)
+            X_train = np.concatenate([validation_bandit_data["context"], validation_bandit_data["action"].reshape(-1,dataset.len_list)], axis=1)
+            y_train = validation_bandit_data["reward_click"].reshape(-1,dataset.len_list)
+            click_model.fit(
+                X=X_train, 
+                y=y_train, 
+            )
             
             (
                 estimated_behavior_policy_p_click, 
                 estimated_evaluation_policy_p_click,
                 p_click_pi_e_by_click_model, #p_c(x,a,pi_e)
-                click_probability_factual_by_click_model
-            )  = dataset.obtain_p_click_pi_given_noise(
+            )  = dataset.obtain_p_click_pi_given_estimated_click_probability(
                         context=validation_bandit_data["context"],
                         action=validation_bandit_data["action"],
+                        click_model=click_model,
                         evaluation_policy_logit_type=cfg.setting.evaluation_policy_logit,
-                        noise=estimation_noise,
                         eps=cfg.setting.eps,
+                        tau=cfg.setting.tau_pi_e,
                 )
-
-            # click_probability_factual_by_click_model = click_model.predict_proba(X_train).reshape(validation_bandit_data["action"].shape[0])
+            click_probability_factual_by_click_model = click_model.predict_proba(X_train).reshape(validation_bandit_data["action"].shape[0])
             estimated_CR_factual_by_click_model = click_probability_factual_by_click_model * estimated_conversion_factual #true_click * estimated conversion
-
+            # print(estimated_CR_factual_by_click_model)
             dm_term = (p_click_pi_e*estimated_conversion_for_dm_term).sum()
             dm_term_by_click_model = (p_click_pi_e_by_click_model*estimated_conversion_for_dm_term).sum()
+            # print(dm_term)
+            # print(dm_term_by_click_model)
             ################################################
 
             ope = OffPolicyEvaluation(
                 bandit_feedback=validation_bandit_data,
                 ope_estimators=[
-                        IPS(estimator_name="IPS", len_list=cfg.setting.len_list), 
-                        IIPS(estimator_name="IIPS", len_list=cfg.setting.len_list),  
-                        RIPS(estimator_name="RIPS", len_list=cfg.setting.len_list),
+                        # IPS(estimator_name="IPS", len_list=cfg.setting.len_list), 
+                        # IIPS(estimator_name="IIPS", len_list=cfg.setting.len_list),  
+                        # RIPS(estimator_name="RIPS", len_list=cfg.setting.len_list),
                         CIPS(estimator_name="CIPS", len_list=cfg.setting.len_list),
                         CDR(estimator_name="CDR", len_list=cfg.setting.len_list),
                         CIPS(estimator_name="CIPS (estimate)", len_list=cfg.setting.len_list, use_estimated_click_model=True),
@@ -230,6 +237,9 @@ def main(cfg: DictConfig) -> None:
                 dm_term_by_click_model=dm_term_by_click_model,
             )
             estimated_policy_value_list.append(estimated_policy_values)
+            # print("max_iw", (evaluation_policy_pscore/ validation_bandit_data["pscore"]).max())
+            # print("max_iw_CIPS", (evaluation_policy_p_click/ validation_bandit_data["p_click_factual_pi_0"]).max())
+        
         
         #summarize result
         result_df = (

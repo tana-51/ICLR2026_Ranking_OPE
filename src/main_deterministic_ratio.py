@@ -101,6 +101,7 @@ def main(cfg: DictConfig) -> None:
                 context=context,
                 action_context=np.eye(cfg.setting.n_unique_action, dtype=int),
                 random_state=cfg.setting.random_state,
+                tau=cfg.setting.tau_pi_e,
             )
             
         pi_e_value = dataset.calc_ground_truth_policy_value_epsilon_greedy(
@@ -135,6 +136,7 @@ def main(cfg: DictConfig) -> None:
                     context=validation_bandit_data["context"],
                     action_context=validation_bandit_data["action_context"],
                     random_state=cfg.setting.random_state,
+                    tau=cfg.setting.tau_pi_e,
                 )
 
             (
@@ -195,6 +197,7 @@ def main(cfg: DictConfig) -> None:
                         click_model=click_model,
                         evaluation_policy_logit_type=cfg.setting.evaluation_policy_logit,
                         eps=cfg.setting.eps,
+                        tau=cfg.setting.tau_pi_e,
                 )
             click_probability_factual_by_click_model = click_model.predict_proba(X_train).reshape(validation_bandit_data["action"].shape[0])
             estimated_CR_factual_by_click_model = click_probability_factual_by_click_model * estimated_conversion_factual #true_click * estimated conversion
@@ -257,6 +260,7 @@ def main(cfg: DictConfig) -> None:
             ) ** 2
         result_df_list.append(result_df)
         print("max_iw", (evaluation_policy_pscore/ validation_bandit_data["pscore"]).max())
+        print("max_iw_CIPS", (evaluation_policy_p_click/ validation_bandit_data["p_click_factual_pi_0"]).max())
         tqdm.write("=====" * 15)
     
     result_df = pd.concat(result_df_list).reset_index(level=0)

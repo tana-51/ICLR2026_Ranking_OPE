@@ -1020,6 +1020,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
                 reward_structure=self.reward_structure,
                 len_list=self.len_list,
                 random_state=self.random_state,
+                effect_from_ranking=self.effect_from_ranking,
             )
             expected_reward_factual_conversion = action_interaction_reward_function_conversion(
                 context=context,
@@ -1034,6 +1035,12 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
                 effect_from_ranking=self.effect_from_ranking,
             )
             expected_reward_factual = expected_reward_factual_click*expected_reward_factual_conversion
+
+            #test
+            self.q_r = self.base_reward_function_conversion(
+                context=context, action_context=self.action_context, random_state=self.random_state+555,
+            )
+
         # check the shape of expected_reward_factual
         if not (
             isinstance(expected_reward_factual, np.ndarray)
@@ -1055,7 +1062,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
             action=action,
             position=np.tile(np.arange(self.len_list), n_rounds),
             reward=reward.reshape(action.shape[0]),
-            reward_click=(reward.reshape(action.shape[0])>=0).astype(int),
+            reward_click=(reward.reshape(action.shape[0])!=0).astype(int),
             expected_reward_factual=expected_reward_factual.reshape(action.shape[0]),
             expected_reward_factual_click=expected_reward_factual_click.reshape(action.shape[0]),
             expected_reward_factual_conversion=expected_reward_factual_conversion.reshape(action.shape[0]),
@@ -1658,6 +1665,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
                     len_list=self.len_list,
                     is_enumerated=True,
                     random_state=self.random_state,
+                    effect_from_ranking=self.effect_from_ranking,
                 )
                 expected_reward_factual_conversion = action_interaction_reward_function_conversion(
                     context=context_,
@@ -1897,6 +1905,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
             click_model: np.ndarray,
             evaluation_policy_logit_type: str,
             eps: float = 0.2,
+            tau: float = 1.0,
     ):
         
         if evaluation_policy_logit_type == "linear_reward_function":
@@ -1910,6 +1919,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
                 context=context,
                 action_context=self.action_context,
                 random_state=self.random_state,
+                tau=tau,
             )
     
         action = action.reshape((-1, self.len_list))
@@ -1977,6 +1987,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
             evaluation_policy_logit_type: str,
             noise: float,
             eps: float = 0.2,
+            tau: float = 1.0,
     ):
         
         if evaluation_policy_logit_type == "linear_reward_function":
@@ -1990,6 +2001,7 @@ class SyntheticSlateBanditDataset(BaseBanditDataset):
                 context=context,
                 action_context=self.action_context,
                 random_state=self.random_state,
+                tau=tau,
             )
     
         action = action.reshape((-1, self.len_list))
@@ -2091,8 +2103,8 @@ def generate_symmetric_matrix(n_unique_action: int, random_state: int) -> np.nda
 
     """
     random_ = check_random_state(random_state)
-    base_matrix = random_.normal(scale=0.5, size=(n_unique_action, n_unique_action))
-    # base_matrix = random_.uniform(low=0.0,high=1.0, size=(n_unique_action, n_unique_action))
+    # base_matrix = random_.normal(scale=1.0, size=(n_unique_action, n_unique_action))
+    base_matrix = random_.uniform(low=-3.0,high=3.0, size=(n_unique_action, n_unique_action))
     symmetric_matrix = (
         np.tril(base_matrix) + np.tril(base_matrix).T - np.diag(base_matrix.diagonal())
     )
@@ -2135,6 +2147,7 @@ def action_interaction_reward_function(
     len_list: int,
     is_enumerated: bool = False,
     random_state: Optional[int] = None,
+    effect_from_ranking: float = 0.0,
     **kwargs,
 ) -> np.ndarray:
     """Reward function incorporating interactions among combinatorial action
@@ -2263,7 +2276,8 @@ def action_interaction_reward_function(
                         break
                 elif pos_ == pos2_:
                     continue
-                tmp_fixed_reward += action_interaction_weight_matrix[
+                distance = 1 / np.abs(pos_ - pos2_)
+                tmp_fixed_reward += effect_from_ranking*distance*action_interaction_weight_matrix[
                     action_2d[:, pos_], action_2d[:, pos2_]
                 ]
         else:
@@ -2420,7 +2434,8 @@ def action_interaction_reward_function_conversion(
     expected_reward = base_reward_function(
         context=context, action_context=action_context, random_state=random_state
     ) 
-    # print(expected_reward)
+    # expected_reward += np.random.normal(loc=3.0, scale=1.0, size=expected_reward.shape)
+    # print(expected_reward.max(), expected_reward.min())
     if reward_type == "binary":
         # expected_reward = np.abs(expected_reward)
         expected_reward = logit(expected_reward)
@@ -2439,7 +2454,8 @@ def action_interaction_reward_function_conversion(
                         break
                 elif pos_ == pos2_:
                     continue
-                tmp_fixed_reward += effect_from_ranking*action_interaction_weight_matrix[
+                distance = 1 / np.abs(pos_ - pos2_)
+                tmp_fixed_reward += effect_from_ranking*distance*action_interaction_weight_matrix[
                     action_2d[:, pos_], action_2d[:, pos2_]
                 ]
         else:
@@ -2504,7 +2520,7 @@ def linear_behavior_policy_logit(
     """
     check_array(array=context, name="context", expected_dim=2)
     check_array(array=action_context, name="action_context", expected_dim=2)
-    check_scalar(tau, name="tau", target_type=(int, float), min_val=0)
+    # check_scalar(tau, name="tau", target_type=(int, float), min_val=0)
 
     random_ = check_random_state(random_state)
     logits = np.zeros((context.shape[0], action_context.shape[0]))
@@ -2515,6 +2531,12 @@ def linear_behavior_policy_logit(
         logits[:, d] = context @ coef_ + action_context[d] @ action_coef_ 
         logits[:,d] += context_action_coef[:,d]
 
+    # logits = linear_reward_function(
+    #             context=context,
+    #             action_context=np.eye(6, dtype=int),
+    #             random_state=12345,
+    #         )
+    # print(logits.sum(axis=1))
     return logits / tau
 
 

@@ -42,6 +42,9 @@ from plot import(
 def main(cfg: DictConfig) -> None:
     if cfg.setting.deterministic_user_threshold == "-inf":
         cfg.setting.deterministic_user_threshold = -np.inf
+    if cfg.setting.deterministic_user_threshold == "inf":
+        cfg.setting.deterministic_user_threshold = np.inf
+
     np.random.seed(cfg.setting.random_state)
     num_runs = cfg.setting.num_runs
     num_data_list = cfg.setting.num_data_list
@@ -98,6 +101,7 @@ def main(cfg: DictConfig) -> None:
             context=context,
             action_context=np.eye(cfg.setting.n_unique_action, dtype=int),
             random_state=cfg.setting.random_state,
+            tau=cfg.setting.tau_pi_e,
         )
         
     pi_e_value = dataset.calc_ground_truth_policy_value_epsilon_greedy(
@@ -106,6 +110,12 @@ def main(cfg: DictConfig) -> None:
         eps=cfg.setting.eps,
     )
     print("pi_e_value", pi_e_value)
+
+    bandit_data = dataset.obtain_batch_bandit_feedback(
+                n_rounds=n_test,
+                # clip_logit_value=700.0,
+            )
+    print("pi_0_value", bandit_data["reward"].sum() / n_test)
 
     result_df_list = []
     for num_data in num_data_list:
@@ -131,6 +141,7 @@ def main(cfg: DictConfig) -> None:
                     context=validation_bandit_data["context"],
                     action_context=validation_bandit_data["action_context"],
                     random_state=cfg.setting.random_state,
+                    tau=cfg.setting.tau_pi_e,
                 )
 
             (
@@ -163,11 +174,14 @@ def main(cfg: DictConfig) -> None:
             estimated_conversion = reg_model.predict(
                 context=np.repeat(validation_bandit_data["context"], dataset.len_list, axis=0)
             )
+            
             estimated_conversion_for_dm_term = reg_model.predict(
                 context=validation_bandit_data["context"]
             )[:,:,0]
+            # estimated_conversion_for_dm_term = dataset.q_r
             # print("estimated_conversion", estimated_conversion.shape)
             estimated_conversion_factual = estimated_conversion[np.arange(dataset.len_list*validation_bandit_data["context"].shape[0]),validation_bandit_data["action"],0]
+            # estimated_conversion_factual = validation_bandit_data["expected_reward_factual_conversion"]
             # print(estimated_conversion_factual.shape)
             estimated_CR_factual = click_probability_true * estimated_conversion_factual #true_click * estimated conversion
             ################################################
@@ -191,12 +205,15 @@ def main(cfg: DictConfig) -> None:
                         click_model=click_model,
                         evaluation_policy_logit_type=cfg.setting.evaluation_policy_logit,
                         eps=cfg.setting.eps,
+                        tau=cfg.setting.tau_pi_e,
                 )
             click_probability_factual_by_click_model = click_model.predict_proba(X_train).reshape(validation_bandit_data["action"].shape[0])
             estimated_CR_factual_by_click_model = click_probability_factual_by_click_model * estimated_conversion_factual #true_click * estimated conversion
-
+            # print(estimated_CR_factual_by_click_model)
             dm_term = (p_click_pi_e*estimated_conversion_for_dm_term).sum()
             dm_term_by_click_model = (p_click_pi_e_by_click_model*estimated_conversion_for_dm_term).sum()
+            # print(dm_term/ num_data)
+            # print(dm_term_by_click_model/ num_data)
             ################################################
 
             ope = OffPolicyEvaluation(
@@ -227,6 +244,8 @@ def main(cfg: DictConfig) -> None:
                 dm_term_by_click_model=dm_term_by_click_model,
             )
             estimated_policy_value_list.append(estimated_policy_values)
+            # print("max_iw", (evaluation_policy_pscore/ validation_bandit_data["pscore"]).max())
+            # print("max_iw_CIPS", (evaluation_policy_p_click/ validation_bandit_data["p_click_factual_pi_0"]).max())
         
         #summarize result
         result_df = (
@@ -253,6 +272,7 @@ def main(cfg: DictConfig) -> None:
             ) ** 2
         result_df_list.append(result_df)
         print("max_iw", (evaluation_policy_pscore/ validation_bandit_data["pscore"]).max())
+        print("max_iw_CIPS", (evaluation_policy_p_click/ validation_bandit_data["p_click_factual_pi_0"]).max())
         tqdm.write("=====" * 15)
     
     result_df = pd.concat(result_df_list).reset_index(level=0)
