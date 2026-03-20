@@ -27,7 +27,8 @@ source .venv/bin/activate
 ```
 
 ## Runing the code
-### Section 5.1 SYNTHETIC DATA
+### Section 5.1: SYNTHETIC DATA
+The commands needed to reproduce the experiments are summarized below. Please move under the `src` directly first and then run the commands.
 ```
 cd src
 
@@ -45,7 +46,7 @@ uv run python ./src/main_deterministic_ratio.py setting.run_file="main_determini
 
 ```
 
-### Section 5.2 REAL-WORLD DATA
+### Section 5.2: REAL-WORLD DATA
 We use [KuaiRec](https://kuairec.com) in our real-world experiments. Please download the above datasets from the repository and put them under `./real/data/`. Then, run the following.
 
 
