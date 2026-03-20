@@ -26,8 +26,8 @@ from obp.ope import(
     SlateRewardInteractionIPS as RIPS,
 )
 
-from dataset_real_deterministic import RealSlateBanditDataset
-from dataset import linear_behavior_policy_logit
+from dataset_real import RealSlateBanditDataset
+from dataset_real import linear_behavior_policy_logit
 from estimator import(
     ClickBasedIPS as CIPS,
     ClickBasedDR as CDR,
@@ -273,13 +273,18 @@ def main(cfg: DictConfig) -> None:
         result_df_list.append(result_df)
         print("max_iw", (evaluation_policy_pscore/ validation_bandit_data["pscore"]).max())
         print("max_iw_CIPS", (evaluation_policy_p_click/ validation_bandit_data["p_click_factual_pi_0"]).max())
+        result_df = pd.concat(result_df_list).reset_index(level=0)
+        result_df.to_csv("len_list.csv")
+        plot(vary_list=len_list_list, result_df=result_df, variable_name="len_list")
+        plot_normalize(vary_list=len_list_list, result_df=result_df, variable_name="len_list")
+
         tqdm.write("=====" * 15)
 
     result_df = pd.concat(result_df_list).reset_index(level=0)
     result_df.to_csv("len_list.csv")
 
-    plot(vary_list=len_list_list, result_df=result_df, variable_name="len_list")
-    plot_normalize(vary_list=len_list_list, result_df=result_df, variable_name="len_list")
+    # plot(vary_list=len_list_list, result_df=result_df, variable_name="len_list")
+    # plot_normalize(vary_list=len_list_list, result_df=result_df, variable_name="len_list")
 
 if __name__ == "__main__":
     main()

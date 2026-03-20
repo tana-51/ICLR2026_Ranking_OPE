@@ -34,6 +34,9 @@ len_list_list: [2,3,4,5,6]
 #estimation_noise
 estimation_noise_list: [0.0, 2.0, 4.0, 6.0, 8.0]
 
+#epsilon
+epsilon_list: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
 
 #kuairec
 real:
@@ -60,7 +63,7 @@ real:
   num_data: 1000
 
   #len_list
-  len_list_list: [2,3,4,5,6]
+  len_list_list: [2,3,4,5]
 
   #estimation_noise
   estimation_noise_list: [0.0, 2.0, 4.0, 6.0, 8.0]

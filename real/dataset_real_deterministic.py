@@ -944,6 +944,8 @@ class RealSlateBanditDataset(BaseBanditDataset):
                 effect_from_ranking=self.effect_from_ranking,
             )
             expected_reward_factual = expected_reward_factual_click*expected_reward_factual_conversion
+
+            # self.q_r = expected_reward_factual_conversion.copy()
         # check the shape of expected_reward_factual
         if not (
             isinstance(expected_reward_factual, np.ndarray)

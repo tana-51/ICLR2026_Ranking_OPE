@@ -16,9 +16,12 @@ from obp.ope.estimators_slate import(
 
 
 
+
+
+
 @dataclass
 class BaseSlateInverseProbabilityWeighting(BaseSlateOffPolicyEstimator):
-
+    
     len_list: int
 
     def _estimate_slate_confidence_interval_by_bootstrap(
@@ -46,8 +49,7 @@ class BaseSlateInverseProbabilityWeighting(BaseSlateOffPolicyEstimator):
 
 @dataclass
 class ClickBasedIPS(BaseSlateInverseProbabilityWeighting):
-    
-
+   
     estimator_name: str = "cips"
     use_estimated_click_model: bool = False
 
@@ -135,7 +137,7 @@ class ClickBasedIPS(BaseSlateInverseProbabilityWeighting):
 
 @dataclass
 class ClickBasedDR(BaseSlateInverseProbabilityWeighting):
-    
+   
     estimator_name: str = "cdr"
     use_estimated_click_model: bool = False
 
@@ -150,10 +152,9 @@ class ClickBasedDR(BaseSlateInverseProbabilityWeighting):
         dm_term: Optional[np.ndarray] = None,
         **kwargs,
     ) -> np.ndarray:
-        
+       
         iw = evaluation_policy_pscore / behavior_policy_pscore
         estimated_rewards = iw * (reward - q_hat) 
-        # estimated_rewards += evaluation_policy_pscore*estimated_conversion_factual
         estimated_rewards = np.append(estimated_rewards, dm_term)
 
         return estimated_rewards
@@ -174,8 +175,7 @@ class ClickBasedDR(BaseSlateInverseProbabilityWeighting):
         dm_term_by_click_model: Optional[np.ndarray] = None,
         **kwargs,
     ) -> float:
-        
-
+       
         if self.use_estimated_click_model==True:
             return (
                 self._estimate_round_rewards(
@@ -216,7 +216,7 @@ class ClickBasedDR(BaseSlateInverseProbabilityWeighting):
         random_state: Optional[int] = None,
         **kwargs,
     ) -> Dict[str, float]:
-        
+       
         check_sips_inputs(
             slate_id=slate_id,
             reward=reward,

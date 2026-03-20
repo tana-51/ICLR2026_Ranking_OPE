@@ -123,13 +123,8 @@ def main(cfg: DictConfig) -> None:
         for _ in tqdm(range(num_runs), desc=f"num_data={num_data}..."):
             validation_bandit_data = dataset.obtain_batch_bandit_feedback(
                 n_rounds=num_data,
-                # clip_logit_value=700.0,
             )
-            # print("action", validation_bandit_data["action"])
-            # print("expected_reward_factual_conversion", validation_bandit_data["expected_reward_factual_conversion"])
-            # print("expected_reward_factual_click", validation_bandit_data["expected_reward_factual_click"])
-            # print("expected_reward_factual_conversion", validation_bandit_data["expected_reward_factual_conversion"])
-
+            
             if cfg.setting.evaluation_policy_logit == "linear_reward_function":
                 evaluation_policy_logit = linear_reward_function(
                     context=validation_bandit_data["context"],
@@ -178,11 +173,9 @@ def main(cfg: DictConfig) -> None:
             estimated_conversion_for_dm_term = reg_model.predict(
                 context=validation_bandit_data["context"]
             )[:,:,0]
-            # estimated_conversion_for_dm_term = dataset.q_r
-            # print("estimated_conversion", estimated_conversion.shape)
+
             estimated_conversion_factual = estimated_conversion[np.arange(dataset.len_list*validation_bandit_data["context"].shape[0]),validation_bandit_data["action"],0]
-            # estimated_conversion_factual = validation_bandit_data["expected_reward_factual_conversion"]
-            # print(estimated_conversion_factual.shape)
+
             estimated_CR_factual = click_probability_true * estimated_conversion_factual #true_click * estimated conversion
             ################################################
             ################################################
@@ -209,11 +202,10 @@ def main(cfg: DictConfig) -> None:
                 )
             click_probability_factual_by_click_model = click_model.predict_proba(X_train).reshape(validation_bandit_data["action"].shape[0])
             estimated_CR_factual_by_click_model = click_probability_factual_by_click_model * estimated_conversion_factual #true_click * estimated conversion
-            # print(estimated_CR_factual_by_click_model)
+
             dm_term = (p_click_pi_e*estimated_conversion_for_dm_term).sum()
             dm_term_by_click_model = (p_click_pi_e_by_click_model*estimated_conversion_for_dm_term).sum()
-            # print(dm_term/ num_data)
-            # print(dm_term_by_click_model/ num_data)
+
             ################################################
 
             ope = OffPolicyEvaluation(
@@ -244,9 +236,7 @@ def main(cfg: DictConfig) -> None:
                 dm_term_by_click_model=dm_term_by_click_model,
             )
             estimated_policy_value_list.append(estimated_policy_values)
-            # print("max_iw", (evaluation_policy_pscore/ validation_bandit_data["pscore"]).max())
-            # print("max_iw_CIPS", (evaluation_policy_p_click/ validation_bandit_data["p_click_factual_pi_0"]).max())
-        
+           
         #summarize result
         result_df = (
             DataFrame(DataFrame(estimated_policy_value_list).stack())
@@ -278,8 +268,8 @@ def main(cfg: DictConfig) -> None:
     result_df = pd.concat(result_df_list).reset_index(level=0)
     result_df.to_csv("num_data.csv")
 
-    plot(vary_list=num_data_list, result_df=result_df, variable_name="num_data")
-    plot_normalize(vary_list=num_data_list, result_df=result_df, variable_name="num_data")
+    # plot(vary_list=num_data_list, result_df=result_df, variable_name="num_data")
+    # plot_normalize(vary_list=num_data_list, result_df=result_df, variable_name="num_data")
 
 if __name__ == "__main__":
     main()

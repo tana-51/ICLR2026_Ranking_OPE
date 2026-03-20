@@ -7,7 +7,6 @@ from typing import Tuple
 from typing import Union
 
 import numpy as np
-import pandas as pd
 from scipy.special import logit
 from scipy.special import perm
 from scipy.stats import truncnorm
@@ -15,8 +14,6 @@ from scipy.stats import rankdata
 from sklearn.utils import check_random_state
 from sklearn.utils import check_scalar
 from tqdm import tqdm
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
 
 from obp.types import BanditFeedback
 # from obp.utils import check_array
@@ -79,7 +76,172 @@ def gen_eps_greedy(
 
 
 @dataclass
-class RealSlateBanditDataset(BaseBanditDataset):
+class SyntheticSlateBanditDataset(BaseBanditDataset):
+    """Class for synthesizing slate bandit dataset.
+
+    Note
+    -----
+    By calling the `obtain_batch_bandit_feedback` method several times,
+    we can resample logged bandit data from the same data generating distribution.
+    This can be used to estimate confidence intervals of the performances of Slate OPE estimators.
+
+    Parameters
+    -----------
+    n_unique_action: int (>= len_list)
+        Number of unique actions.
+
+    len_list: int (> 1)
+        Length of a list/ranking of actions, slate size.
+
+    dim_context: int, default=1
+        Number of dimensions of context vectors.
+
+    reward_type: str, default='binary'
+        Type of reward variable, which must be either 'binary' or 'continuous'.
+        When 'binary', rewards are sampled from the Bernoulli distribution.
+        When 'continuous', rewards are sampled from the truncated Normal distribution with `scale=1`.
+        The mean parameter of the reward distribution is determined by the `reward_function`.
+
+    reward_structure: str, default='cascade_additive'
+        Specify which reward structure to use to define the expected rewards. Must be one of the following.
+            - 'cascade_additive'
+            - 'cascade_decay'
+            - 'independent'
+            - 'standard_additive'
+            - 'standard_decay'
+
+        The expected reward function is defined as follows (:math:`f` is a base reward function of each item-position, :math:`g` is a transform function, and :math:`h` is a decay function):
+            'cascade_additive': :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j < k} W(a(k), a(j)))`.
+            'cascade_decay': :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) - \\sum_{j < k} g^{-1}(f(x, a(j))) / h(|k-j|))`.
+            'independent': :math:`q_k(x, a) = f(x, a(k))`
+            'standard_additive': :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j \\neq k} W(a(k), a(j)))`.
+            'standard_decay': :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) - \\sum_{j \\neq k} g^{-1}(f(x, a(j))) / h(|k-j|))`.
+        When `reward_type` is 'continuous', transform function is the identity function.
+        When `reward_type` is 'binary', transform function is the logit function.
+        See the experiment section of Kiyohara et al.(2022) for details.
+
+    decay_function: str, default='exponential'
+        Specify the decay function used to define the expected reward, which must be one of 'exponential' or 'inverse'.
+        Decay function is used when `reward_structure`='cascade_decay' or `reward_structure`='standard_decay'.
+        Discount rate is defined as follows (:math:`k` and :math:`j` are positions of the two slots).
+            'exponential': :math:`h(|k-j|) = \\exp(-|k-j|)`.
+            'inverse': :math:`h(|k-j|) = \\frac{1}{|k-j|+1})`.
+        See the experiment section of Kiyohara et al.(2022) for details.
+
+    click_model: str, default=None
+        Specify the click model used to define the expected reward, which must be one of None, 'pbm', or 'cascade'.
+        When None, no click model is applied when defining the expected reward for each slot in a ranking.
+        When 'pbm', the expected reward will be modifed based on the position-based model.
+        When 'cascade', the expected reward will be modifed based on the cascade model.
+        Note that these click models are not applicable to 'continuous' rewards.
+
+    eta: float, default=1.0
+        A hyperparameter to define the click model to generate the data.
+        When click_model='pbm', `eta` defines the examination probabilities of the position-based model.
+        For example, when `eta`=0.5, the examination probability at position `k` is :math:`\\theta (k) = (1/k)^{0.5}`.
+        When click_model='cascade', `eta` defines the position-dependent attractiveness parameters of the dependent click model (an extension of the cascade model).
+        For example, when `eta`=0.5, the position-dependent attractiveness parameter at position `k` is :math:`\\alpha (k) = (1/k)^{0.5}`.
+        When `eta` is very large, the click model induced is close to the vanilla cascade model.
+
+    base_reward_function: Callable[[np.ndarray, np.ndarray], np.ndarray], default=None
+        Function defining the expected reward function for each given action-context pair,
+        i.e., :math:`q: \\mathcal{X} \\times \\mathcal{A} \\rightarrow \\mathbb{R}`.
+        If None, context **independent** expected rewards will be
+        sampled from the uniform distribution automatically.
+
+    behavior_policy_function: Callable[[np.ndarray, np.ndarray], np.ndarray], default=None
+        Function generating logit values for each action in the action space,
+        i.e., :math:`\\f: \\mathcal{X} \\rightarrow \\mathbb{R}^{\\mathcal{A}}`.
+        If None, context **independent** uniform distribution will be used (uniform behavior policy).
+
+    is_factorizable: bool
+        Whether to use factorizable evaluation policy (which choose slot actions independently).
+        Note that a factorizable policy can choose the same action more than twice in a slate.
+        In contrast, a non-factorizable policy chooses a slate action without any duplicates among slots.
+        When `n_unique_action` and `len_list` are large, a factorizable policy should be used due to computation time.
+
+    random_state: int, default=12345
+        Controls the random seed in sampling synthetic slate bandit dataset.
+
+    dataset_name: str, default='synthetic_slate_bandit_dataset'
+        Name of the dataset.
+
+    ----------
+
+    .. code-block:: python
+
+        >>> from obp.dataset import (
+            logistic_reward_function,
+            linear_behavior_policy_logit,
+            SyntheticSlateBanditDataset,
+        )
+
+        # generate synthetic contextual bandit feedback with 10 actions.
+        >>> dataset = SyntheticSlateBanditDataset(
+                n_unique_action=10,
+                dim_context=5,
+                len_list=3,
+                base_reward_function=logistic_reward_function,
+                behavior_policy_function=linear_behavior_policy_logit,
+                reward_type='binary',
+                reward_structure='cascade_additive',
+                click_model='cascade',
+                random_state=12345
+            )
+        >>> bandit_feedback = dataset.obtain_batch_bandit_feedback(
+                n_rounds=5, return_pscore_item_position=True
+            )
+        >>> bandit_feedback
+        {
+            'n_rounds': 5,
+            'n_unique_action': 10,
+            'slate_id': array([0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]),
+            'context': array([[-0.20470766,  0.47894334, -0.51943872, -0.5557303 ,  1.96578057],
+                [ 1.39340583,  0.09290788,  0.28174615,  0.76902257,  1.24643474],
+                [ 1.00718936, -1.29622111,  0.27499163,  0.22891288,  1.35291684],
+                [ 0.88642934, -2.00163731, -0.37184254,  1.66902531, -0.43856974],
+                [-0.53974145,  0.47698501,  3.24894392, -1.02122752, -0.5770873 ]]),
+            'action_context': array([[1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 1, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]]),
+            'action': array([8, 6, 5, 4, 7, 0, 1, 3, 5, 4, 6, 1, 4, 1, 7]),
+            'position': array([0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2]),
+            'reward': array([1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0]),
+            'expected_reward_factual': array([0.5       , 0.73105858, 0.5       , 0.88079708, 0.88079708,
+                0.88079708, 0.5       , 0.73105858, 0.5       , 0.5       ,
+                0.26894142, 0.5       , 0.73105858, 0.73105858, 0.5       ]),
+            'pscore_cascade': array([0.05982646, 0.00895036, 0.00127176, 0.10339675, 0.00625482,
+                0.00072447, 0.14110696, 0.01868618, 0.00284884, 0.10339675,
+                0.01622041, 0.00302774, 0.10339675, 0.01627253, 0.00116824]),
+            'pscore': array([0.00127176, 0.00127176, 0.00127176, 0.00072447, 0.00072447,
+                0.00072447, 0.00284884, 0.00284884, 0.00284884, 0.00302774,
+                0.00302774, 0.00302774, 0.00116824, 0.00116824, 0.00116824]),
+            'pscore_item_position': array([0.19068462, 0.40385939, 0.33855573, 0.31231088, 0.40385939,
+                0.2969341 , 0.40489767, 0.31220474, 0.3388982 , 0.31231088,
+                0.33855573, 0.40489767, 0.31231088, 0.40489767, 0.33855573])
+        }
+
+
+    References
+    ------------
+    Shuai Li, Yasin Abbasi-Yadkori, Branislav Kveton, S. Muthukrishnan, Vishwa Vinay, Zheng Wen.
+    "Offline Evaluation of Ranking Policies with Click Models.", 2018.
+
+    James McInerney, Brian Brost, Praveen Chandar, Rishabh Mehrotra, and Benjamin Carterette.
+    "Counterfactual Evaluation of Slate Recommendations with Sequential Reward Interactions.", 2020.
+
+    Haruka Kiyohara, Yuta Saito, Tatsuya Matsuhiro, Yusuke Narita, Nobuyuki Shimizu, Yasuo Yamamoto.
+    "Doubly Robust Off-Policy Evaluation for Ranking Policies under the Cascade Behavior Model.", 2022.
+
+
+    """
 
     n_unique_action: int
     len_list: int
@@ -107,9 +269,6 @@ class RealSlateBanditDataset(BaseBanditDataset):
     ] = None
     deterministic_user_threshold: float = 0.0
     effect_from_ranking: float = 0.0
-    n_components: int = 10
-    threshold: float = 2.0
-
 
     def __post_init__(self) -> None:
         """Initialize Class."""
@@ -205,6 +364,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
         # one-hot encoding characterizing each action
         self.action_context = np.eye(self.n_unique_action, dtype=int)
 
+
         #conversion
         if self.reward_structure_conversion in ["cascade_additive", "standard_additive"]:
             # generate additive action interaction weight matrix of (n_unique_action, n_unique_action)
@@ -240,54 +400,6 @@ class RealSlateBanditDataset(BaseBanditDataset):
             self.reward_max_coversion = 1e10
             self.reward_std_coversion = 1.0
 
-        self.pca = PCA(n_components=self.n_components, random_state=self.random_state)
-        self.sc = StandardScaler()
-        self.fixed_context, self.fixed_expected_reward_conversion, self.fixed_expected_reward_click = self.pre_process()
-
-    def pre_process(self,):
-        """Preprocess raw dataset."""
-        df_small_matrix = pd.read_csv("/Users/kouichi/Desktop/sony/real/data/small_matrix.csv")
-        df_user_feature = pd.read_csv("/Users/kouichi/Desktop/sony/real/data/user_features.csv")
-        
-        # small_matrix
-        small_user_id = df_small_matrix["user_id"]
-        user_idx = list(set(small_user_id))
-        user_idx = sorted(user_idx)
-        
-        small_video_id = df_small_matrix["video_id"]
-        video_idx = list(set(small_video_id))
-        video_idx = sorted(video_idx)
-        
-        small_watch_ratio = df_small_matrix["watch_ratio"]
-
-        small_matrix = np.zeros(7176*10728).reshape(7176,10728)
-
-        small_matrix[small_user_id,small_video_id] = small_watch_ratio
-        
-        use_video_id = sorted(self.random_.choice(video_idx, self.n_unique_action, replace=False))
-        small_matrix = small_matrix[user_idx,:]
-        small_matrix = small_matrix[:,use_video_id]
-
-        #click
-        base_click = np.ones(small_matrix.shape)
-        base_click[small_matrix < self.threshold] = 0.0
-        eta = self.random_.uniform(low=0.0, high=0.5, size=base_click.shape)
-        
-        fixed_expected_reward_click = base_click * (1-eta)
-        fixed_expected_reward_click += (1-base_click) * eta
-
-        
-        # contexts
-        delete_column = df_user_feature.columns.values[df_user_feature.dtypes == object]
-        df_user_feature = df_user_feature.drop(delete_column, axis=1)
-        df_user_feature = df_user_feature.dropna(axis=1)
-        contexts = np.array(df_user_feature.iloc[user_idx,1:])
-        contexts = self.sc.fit_transform(
-            self.pca.fit_transform(contexts)
-        )
-        # print(small_matrix.shape)
-        return contexts, small_matrix, fixed_expected_reward_click
-    
     def obtain_standard_decay_action_interaction_weight_matrix(
         self,
         len_list,
@@ -468,11 +580,6 @@ class RealSlateBanditDataset(BaseBanditDataset):
             evaluation_policy_softmax_ = np.exp(
                 np.minimum(evaluation_policy_logit_, clip_logit_value)
             )
-        # for i in tqdm(
-        #     np.arange(n_rounds),
-        #     desc="[obtain_pscore_given_evaluation_policy_logit]",
-        #     total=n_rounds,
-        # ):
         for i in np.arange(n_rounds):
             unique_action_set = np.arange(self.n_unique_action)
             score_ = softmax(evaluation_policy_logit_[i : i + 1])[0]
@@ -595,11 +702,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
             behavior_policy_softmax_ = np.exp(
                 np.minimum(behavior_policy_logit_, clip_logit_value)
             )
-        # for i in tqdm(
-        #     np.arange(n_rounds),
-        #     desc="[sample_action_and_obtain_pscore]",
-        #     total=n_rounds,
-        # ):
+
         for i in np.arange(n_rounds):
             is_deterministic = False
             unique_action_set = np.arange(self.n_unique_action)
@@ -669,7 +772,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
                 action_context=self.action_context,
                 action=enumerated_slate_actions.flatten(),
                 action_interaction_weight_matrix=self.action_interaction_weight_matrix,
-                expected_reward=self.expected_reward_click,
+                base_reward_function=self.base_reward_function,
                 reward_type=self.reward_type,
                 reward_structure=self.reward_structure,
                 len_list=self.len_list,
@@ -778,46 +881,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
 
         reward = reward_click*reward_conversion
         return reward
-        # expected_reward_factual *= self.exam_weight
-        # if self.reward_type == "binary":
-        #     sampled_reward_list = list()
-        #     discount_factors = np.ones(expected_reward_factual.shape[0])
-        #     sampled_rewards_at_position = np.zeros(expected_reward_factual.shape[0])
-        #     for pos_ in np.arange(self.len_list):
-        #         discount_factors *= sampled_rewards_at_position * self.attractiveness[
-        #             pos_
-        #         ] + (1 - sampled_rewards_at_position)
-        #         expected_reward_factual_at_position = (
-        #             discount_factors * expected_reward_factual[:, pos_]
-        #         )
-        #         sampled_rewards_at_position = self.random_.binomial(
-        #             n=1, p=expected_reward_factual_at_position
-        #         )
-        #         sampled_reward_list.append(sampled_rewards_at_position)
-        #     reward = np.array(sampled_reward_list).T
-
-        # elif self.reward_type == "continuous":
-        #     reward = np.zeros(expected_reward_factual.shape)
-        #     for pos_ in np.arange(self.len_list):
-        #         mean = expected_reward_factual[:, pos_]
-        #         # print(mean)
-        #         # a = (self.reward_min - mean) / self.reward_std
-        #         # b = (self.reward_max - mean) / self.reward_std
-        #         # reward[:, pos_] = truncnorm.rvs(
-        #         #     a=a,
-        #         #     b=b,
-        #         #     loc=mean,
-        #         #     scale=self.reward_std,
-        #         #     random_state=self.random_state,
-        #         # )
-        #         reward[:, pos_] = self.random_.normal(
-        #             loc=mean,
-        #             scale=self.reward_std,
-        #         )
-        # else:
-        #     raise NotImplementedError
-        # # return: array-like, shape (n_rounds, len_list)
-        # return reward
+        
 
     def obtain_batch_bandit_feedback(
         self,
@@ -849,11 +913,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
 
         """
         check_scalar(n_rounds, "n_rounds", int, min_val=1)
-        user_idx = self.random_.choice(self.fixed_context.shape[0], size=n_rounds)
-        context = self.fixed_context[user_idx]
-
-        self.expected_reward_click = self.fixed_expected_reward_click[user_idx]
-        self.expected_reward_conversion = self.fixed_expected_reward_conversion[user_idx]
+        context = self.random_.normal(size=(n_rounds, self.dim_context))
         # sample actions for each round based on the behavior policy
         if self.behavior_policy_function is None:
             behavior_policy_logit_ = np.tile(
@@ -907,18 +967,19 @@ class RealSlateBanditDataset(BaseBanditDataset):
                 action_context=self.action_context,
                 action=action,
                 action_interaction_weight_matrix=self.action_interaction_weight_matrix,
-                expected_reward=self.expected_reward_click,
+                base_reward_function=self.base_reward_function,
                 reward_type=self.reward_type,
                 reward_structure=self.reward_structure,
                 len_list=self.len_list,
                 random_state=self.random_state,
+                effect_from_ranking=self.effect_from_ranking,
             )
             expected_reward_factual_conversion = action_interaction_reward_function_conversion(
                 context=context,
                 action_context=self.action_context,
                 action=action,
                 action_interaction_weight_matrix=self.action_interaction_weight_matrix_conversion,
-                expected_reward=self.expected_reward_conversion,
+                base_reward_function=self.base_reward_function_conversion,
                 reward_type=self.reward_type_conversion,
                 reward_structure=self.reward_structure_conversion,
                 len_list=self.len_list,
@@ -926,6 +987,12 @@ class RealSlateBanditDataset(BaseBanditDataset):
                 effect_from_ranking=self.effect_from_ranking,
             )
             expected_reward_factual = expected_reward_factual_click*expected_reward_factual_conversion
+
+            #test
+            self.q_r = self.base_reward_function_conversion(
+                context=context, action_context=self.action_context, random_state=self.random_state+555,
+            )
+
         # check the shape of expected_reward_factual
         if not (
             isinstance(expected_reward_factual, np.ndarray)
@@ -940,7 +1007,6 @@ class RealSlateBanditDataset(BaseBanditDataset):
         )
         return dict(
             n_rounds=n_rounds,
-            user_idx=user_idx,
             n_unique_action=self.n_unique_action,
             slate_id=np.repeat(np.arange(n_rounds), self.len_list),
             context=context,
@@ -948,7 +1014,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
             action=action,
             position=np.tile(np.arange(self.len_list), n_rounds),
             reward=reward.reshape(action.shape[0]),
-            reward_click=(reward.reshape(action.shape[0])>=0).astype(int),
+            reward_click=(reward.reshape(action.shape[0])!=0).astype(int),
             expected_reward_factual=expected_reward_factual.reshape(action.shape[0]),
             expected_reward_factual_click=expected_reward_factual_click.reshape(action.shape[0]),
             expected_reward_factual_conversion=expected_reward_factual_conversion.reshape(action.shape[0]),
@@ -991,17 +1057,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
         context: np.ndarray,
         evaluation_policy_logit_: np.ndarray,
     ):
-        """Calculate the ground-truth policy value of given evaluation policy logit and contexts.
-
-        Parameters
-        -----------
-        context: array-like, shape (n_rounds, dim_context)
-            Context vectors characterizing each data (such as user information).
-
-        evaluation_policy_logit_: array-like, shape (n_rounds, n_unique_action)
-            Logit values to define the evaluation policy.
-
-        """
+        
         check_array(array=context, name="context", expected_dim=2)
         check_array(
             array=evaluation_policy_logit_,
@@ -1039,22 +1095,12 @@ class RealSlateBanditDataset(BaseBanditDataset):
         pscores = []
         n_enumerated_slate_actions = len(enumerated_slate_actions)
         if self.is_factorizable:
-            # for action_list in tqdm(
-            #     enumerated_slate_actions,
-            #     desc="[calc_ground_truth_policy_value (pscore)]",
-            #     total=n_enumerated_slate_actions,
-            # ):
             for action_list in enumerated_slate_actions:
                 pscores.append(
                     softmax(evaluation_policy_logit_)[:, action_list].prod(1)
                 )
             pscores = np.array(pscores).T
         else:
-            # for i in tqdm(
-            #     np.arange(n_rounds),
-            #     desc="[calc_ground_truth_policy_value (pscore)]",
-            #     total=n_rounds,
-            # ):
             for i in np.arange(n_rounds):
                 pscores.append(
                     self._calc_pscore_given_policy_logit(
@@ -1091,11 +1137,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
             n_batch = (n_rounds - 1) // batch_size + 1
 
             policy_value = 0.0
-            # for batch_idx in tqdm(
-            #     np.arange(n_batch),
-            #     desc=f"[calc_ground_truth_policy_value (expected reward), batch_size={batch_size}]",
-            #     total=n_batch,
-            # ):
+
             for batch_idx in np.arange(n_batch):
                 context_ = context[
                     batch_idx * batch_size : (batch_idx + 1) * batch_size
@@ -1109,7 +1151,6 @@ class RealSlateBanditDataset(BaseBanditDataset):
                     action_context=self.action_context,
                     action=enumerated_slate_actions.flatten(),
                     action_interaction_weight_matrix=self.action_interaction_weight_matrix,
-                    expected_reward=self.expected_reward_click,
                     base_reward_function=self.base_reward_function,
                     reward_type=self.reward_type,
                     reward_structure=self.reward_structure,
@@ -1149,44 +1190,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
         action: Optional[np.ndarray] = None,
         epsilon: Optional[float] = 1.0,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Generate three variants of propensity scores of synthetic evaluation policies.
-
-        Parameters
-        -----------
-        evaluation_policy_type: str
-            Specify the type of evaluation policy to generate, which must be one of 'optimal', 'anti-optimal', or 'random'.
-            When 'optimal' is given, we sort actions based on the base expected rewards (outputs of `base_reward_function`) and extract top-L actions (L=`len_list`) for each slate.
-            When 'anti-optimal' is given, we sort actions based on the base expected rewards (outputs of `base_reward_function`) and extract bottom-L actions (L=`len_list`) for each slate.
-            We calculate the three variants of the propensity scores (pscore, `pscore_item_position`, and pscore_cascade) of the epsilon-greedy policy when either 'optimal' or 'anti-optimal' is given.
-            When 'random' is given, we calculate the three variants of the propensity scores of the uniform random policy.
-
-        context: array-like, shape (n_rounds, dim_context)
-            Context vectors characterizing each data (such as user information).
-
-        action: array-like, shape (n_rounds * len_list,), default=None
-            Actions sampled by the behavior policy.
-            Actions sampled within slate `i` is stored in `action[`i` * `len_list`: (`i + 1`) * `len_list`]`.
-            When `evaluation_policy_type`='random', this argument is irrelevant.
-
-        epsilon: float, default=1.
-            Exploration hyperparameter that must take value in the range of [0., 1.].
-            When `evaluation_policy_type`='random', this argument is irrelevant.
-
-        Returns
-        ----------
-        pscore: array-like, shape (n_unique_action * len_list)
-            Probabilities of choosing the slate actions given context (:math:`x`),
-            i.e., :math:`\\pi(a_{i,1}, a_{i,2}, \\ldots, a_{i,L} | x_{i} )`.
-
-        pscore_item_position: array-like, shape (n_unique_action * len_list)
-            Probabilities of choosing the action of the :math:`l`-th slot given context (:math:`x`),
-            i.e., :math:`\\pi(a_{i,l} | x_{i} )`.
-
-        pscore_cascade: array-like, shape (n_unique_action * len_list)
-            Probabilities of choosing the actions of the top :math:`l` slots given context (:math:`x`),
-            i.e., :math:`\\pi(a_{i,1}, a_{i,2}, \\ldots, a_{i,l} | x_{i} )`.
-
-        """
+        
         check_array(array=context, name="context", expected_dim=2)
         if evaluation_policy_type not in ["optimal", "anti-optimal", "random"]:
             raise ValueError(
@@ -1273,24 +1277,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
         action: np.ndarray,
         evaluation_policy_logit_: np.ndarray,
     ):
-        """Calculate action distribution at each slot from a given evaluation policy logit.
-
-        Parameters
-        ----------
-        action: array-like, shape (n_rounds * len_list, )
-            Action chosen by behavior policy.
-
-        evaluation_policy_logit_: array-like, shape (n_rounds, n_unique_action)
-            Logit values of evaluation policy given context (:math:`x`), i.e., :math:`\\f: \\mathcal{X} \\rightarrow \\mathbb{R}^{\\mathcal{A}}`.
-
-        Returns
-        ----------
-        evaluation_policy_action_dist: array-like, shape (n_rounds * len_list * n_unique_action, )
-            Plackett-luce style action distribution induced by evaluation policy
-            (action choice probabilities at each slot given previous action choices)
-            , i.e., :math:`\\pi_e(a_i(l) | x_i, a_i(1), \\ldots, a_i(l-1)) \\forall a_i(l) \\in \\mathcal{A}`.
-
-        """
+        
         check_array(action, name="action", expected_dim=1)
         check_array(
             evaluation_policy_logit_, name="evaluation_policy_logit_", expected_dim=2
@@ -1342,45 +1329,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
         random_pscore_item_position: np.ndarray,
         random_pscore_cascade: np.ndarray,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Calculate three variants of the propensity scores of synthetic evaluation policies via epsilon-greedy.
-
-        Parameters
-        -----------
-        epsilon: float, default=1.
-            Exploration hyperparameter in the epsilon-greedy rule.
-            Must take value in the range of [0., 1.].
-
-        action_2d: array-like, shape (n_rounds, len_list), default=None
-            Actions sampled by the behavior policy.
-            Actions sampled within slate `i` is stored in `action[i]`.
-            When bandit_feedback is obtained by `obtain_batch_bandit_feedback`, we can obtain action_2d as follows: bandit_feedback["action"].reshape((n_rounds, len_list))
-            When `evaluation_policy_type`='random', this argument is unnecessary.
-
-        random_pscore: array-like, shape (n_unique_action * len_list, )
-            Probabilities of the uniform random policy choosing the slate actions given context (:math:`x`),
-            i.e., :math:`\\pi_{unif} (a_{i,1}, a_{i,2}, \\ldots, a_{i,L} | x_{i} )`.
-
-        random_pscore_item_position: array-like, shape (n_unique_action * len_list, )
-            Probabilities of the uniform random policy choosing the action of the :math:`l`-th slot given context (:math:`x`), i.e., :math:`\\pi_{unif}(a_{i,l} | x_{i} )`.
-
-        random_pscore_cascade: array-like, shape (n_unique_action * len_list, )
-            Probabilities of the uniform random policy choosing the actions of the top :math:`l` slots given context (:math:`x`), i.e., :math:`\\pi_{unif}(a_{i,1}, a_{i,2}, \\ldots, a_{i,l} | x_{i} )`.
-
-        Returns
-        ----------
-        pscore: array-like, shape (n_unique_action * len_list)
-            Probabilities of choosing the slate actions given context (:math:`x`),
-            i.e., :math:`\\pi(a_{i,1}, a_{i,2}, \\ldots, a_{i,L} | x_{i} )`.
-
-        pscore_item_position: array-like, shape (n_unique_action * len_list)
-            Probabilities of choosing the action of the :math:`l`-th slot given context (:math:`x`),
-            i.e., :math:`\\pi(a_{i,l} | x_{i} )`.
-
-        pscore_cascade: array-like, shape (n_unique_action * len_list)
-            Probabilities of choosing the actions of the top :math:`l` slots given context (:math:`x`),
-            i.e., :math:`\\pi(a_{i,1}, a_{i,2}, \\ldots, a_{i,l} | x_{i} )`.
-
-        """
+        
         check_array(array=action_2d, name="action_2d", expected_dim=2)
         if not self.is_factorizable and set(
             [np.unique(x).shape[0] for x in action_2d]
@@ -1413,22 +1362,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
         context: np.ndarray,
         evaluation_policy_logit_: np.ndarray,
         eps: float,
-        user_idx: np.ndarray,
     ):
-        """Calculate the ground-truth policy value of given evaluation policy logit and contexts.
-
-        Parameters
-        -----------
-        context: array-like, shape (n_rounds, dim_context)
-            Context vectors characterizing each data (such as user information).
-
-        evaluation_policy_logit_: array-like, shape (n_rounds, n_unique_action)
-            Logit values to define the evaluation policy.
-
-        """
-
-        expected_reward_click = self.fixed_expected_reward_click[user_idx]
-        expected_reward_conversion = self.fixed_expected_reward_conversion[user_idx]
 
         check_array(array=context, name="context", expected_dim=2)
         check_array(
@@ -1467,23 +1401,13 @@ class RealSlateBanditDataset(BaseBanditDataset):
         pscores = []
         n_enumerated_slate_actions = len(enumerated_slate_actions)
         if self.is_factorizable:
-            for action_list in tqdm(
-                enumerated_slate_actions,
-                desc="[calc_ground_truth_policy_value (pscore)]",
-                total=n_enumerated_slate_actions,
-            ):
-            # for action_list in enumerated_slate_actions:
+            for action_list in enumerated_slate_actions:
                 pscores.append(
                     gen_eps_greedy(evaluation_policy_logit_, eps=eps)[:, action_list].prod(1)
                 )
             pscores = np.array(pscores).T
         else:
-            for i in tqdm(
-                np.arange(n_rounds),
-                desc="[calc_ground_truth_policy_value (pscore)]",
-                total=n_rounds,
-            ):
-            # for i in np.arange(n_rounds):
+            for i in np.arange(n_rounds):
                 pscores.append(
                     self._calc_pscore_given_policy_logit_epsilon_greedy(
                         all_slate_actions=enumerated_slate_actions,
@@ -1520,12 +1444,8 @@ class RealSlateBanditDataset(BaseBanditDataset):
             n_batch = (n_rounds - 1) // batch_size + 1
 
             policy_value = 0.0
-            for batch_idx in tqdm(
-                np.arange(n_batch),
-                desc=f"[calc_ground_truth_policy_value (expected reward), batch_size={batch_size}]",
-                total=n_batch,
-            ):
-            # for batch_idx in np.arange(n_batch):
+ 
+            for batch_idx in np.arange(n_batch):
                 context_ = context[
                     batch_idx * batch_size : (batch_idx + 1) * batch_size
                 ]
@@ -1533,40 +1453,26 @@ class RealSlateBanditDataset(BaseBanditDataset):
                     batch_idx * batch_size : (batch_idx + 1) * batch_size
                 ]
 
-                expected_reward_click_ = expected_reward_click[batch_idx * batch_size : (batch_idx + 1) * batch_size]
-                expected_reward_conversion_ = expected_reward_conversion[batch_idx * batch_size : (batch_idx + 1) * batch_size]
-
-                # expected_slate_rewards_ = self.reward_function(
-                #     context=context_,
-                #     action_context=self.action_context,
-                #     action=enumerated_slate_actions.flatten(),
-                #     action_interaction_weight_matrix=self.action_interaction_weight_matrix,
-                #     base_reward_function=self.base_reward_function,
-                #     reward_type=self.reward_type,
-                #     reward_structure=self.reward_structure,
-                #     len_list=self.len_list,
-                #     is_enumerated=True,
-                #     random_state=self.random_state,
-                # )
 
                 expected_reward_factual_click = self.reward_function(
                     context=context_,
                     action_context=self.action_context,
                     action=enumerated_slate_actions.flatten(),
                     action_interaction_weight_matrix=self.action_interaction_weight_matrix,
-                    expected_reward=expected_reward_click_,
+                    base_reward_function=self.base_reward_function,
                     reward_type=self.reward_type,
                     reward_structure=self.reward_structure,
                     len_list=self.len_list,
                     is_enumerated=True,
                     random_state=self.random_state,
+                    effect_from_ranking=self.effect_from_ranking,
                 )
                 expected_reward_factual_conversion = action_interaction_reward_function_conversion(
                     context=context_,
                     action_context=self.action_context,
                     action=enumerated_slate_actions.flatten(),
                     action_interaction_weight_matrix=self.action_interaction_weight_matrix_conversion,
-                    expected_reward=expected_reward_conversion_,
+                    base_reward_function=self.base_reward_function_conversion,
                     reward_type=self.reward_type_conversion,
                     reward_structure=self.reward_structure_conversion,
                     len_list=self.len_list,
@@ -1576,23 +1482,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
                 )
                 expected_slate_rewards_ = expected_reward_factual_click*expected_reward_factual_conversion
 
-                # # click models based on expected reward
-                # expected_slate_rewards_ *= self.exam_weight
-                # if self.reward_type == "binary":
-                #     discount_factors = np.ones(expected_slate_rewards_.shape[0])
-                #     previous_slot_expected_reward = np.zeros(
-                #         expected_slate_rewards_.shape[0]
-                #     )
-                #     for pos_ in np.arange(self.len_list):
-                #         discount_factors *= (
-                #             previous_slot_expected_reward * self.attractiveness[pos_]
-                #             + (1 - previous_slot_expected_reward)
-                #         )
-                #         expected_slate_rewards_[:, pos_] = (
-                #             discount_factors * expected_slate_rewards_[:, pos_]
-                #         )
-                #         previous_slot_expected_reward = expected_slate_rewards_[:, pos_]
-
+               
                 policy_value += (
                     pscores_.flatten() * expected_slate_rewards_.sum(axis=1)
                 ).sum()
@@ -1603,22 +1493,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
     def _calc_pscore_given_policy_logit_epsilon_greedy(
         self, all_slate_actions: np.ndarray, policy_logit_i_: np.ndarray, eps: float,
     ) -> np.ndarray:
-        """Calculate the propensity score of all possible slate actions given a particular policy_logit.
-
-        Parameters
-        ------------
-        all_slate_actions: array-like, (n_action, len_list)
-            All possible slate actions.
-
-        policy_logit_i_: array-like, (n_unique_action, )
-            Logit values given context (:math:`x`), which defines the distribution over actions of the policy.
-
-        Returns
-        ------------
-        pscores: array-like, (n_action, )
-            Propensity scores of all slate actions.
-
-        """
+ 
         n_actions = len(all_slate_actions)
         unique_action_set_2d = np.tile(np.arange(self.n_unique_action), (n_actions, 1))
         pscores = np.ones(n_actions)
@@ -1648,27 +1523,7 @@ class RealSlateBanditDataset(BaseBanditDataset):
         clip_logit_value: Optional[float] = None,
         eps: float = 0.2,
     ):
-        """Calculate the propensity score given particular logit values to define the evaluation policy.
-
-        Parameters
-        ------------
-        action: array-like, (n_rounds * len_list, )
-            Action chosen by the behavior policy.
-
-        evaluation_policy_logit_: array-like, (n_rounds, n_unique_action)
-            Logit values to define the evaluation policy.
-
-        return_pscore_item_position: bool, default=True
-            Whether to compute `pscore_item_position` and include it in the logged data.
-            When `n_actions` and `len_list` are large, `return_pscore_item_position`=True can lead to a long computation time.
-
-        clip_logit_value: Optional[float], default=None
-            A float parameter used to clip logit values (<= `700.`).
-            When None, clipping is not applied to softmax values when obtaining `pscore_item_position`.
-            When a float value is given, logit values are clipped when calculating softmax values.
-            When `n_actions` and `len_list` are large, `clip_logit_value`=None can lead to a long computation time.
-
-        """
+       
         check_array(array=action, name="action", expected_dim=1)
         check_array(
             array=evaluation_policy_logit_,
@@ -1770,7 +1625,6 @@ class RealSlateBanditDataset(BaseBanditDataset):
                 action_context=self.action_context,
                 action=enumerated_slate_actions.flatten(),
                 action_interaction_weight_matrix=self.action_interaction_weight_matrix,
-                expected_reward=self.expected_reward_click,
                 base_reward_function=self.base_reward_function,
                 reward_type=self.reward_type,
                 reward_structure=self.reward_structure,
@@ -1874,6 +1728,107 @@ class RealSlateBanditDataset(BaseBanditDataset):
             p_click_factual_pi_e[i*self.len_list:i*self.len_list+self.len_list] = p_click_pi_e[i,action[i]]
 
         return p_click_factual_pi_0, p_click_factual_pi_e, p_click_pi_e
+    
+    def obtain_p_click_pi_given_noise(
+            self,
+            context: np.ndarray,
+            action: np.ndarray,
+            evaluation_policy_logit_type: str,
+            noise: float,
+            eps: float = 0.2,
+            tau: float = 1.0,
+    ):
+        
+        if evaluation_policy_logit_type == "linear_reward_function":
+            evaluation_policy_logit_ = linear_reward_function(
+                context=context,
+                action_context=self.action_context,
+                random_state=self.random_state,
+            )
+        else:
+            evaluation_policy_logit_ = linear_behavior_policy_logit(
+                context=context,
+                action_context=self.action_context,
+                random_state=self.random_state,
+                tau=tau,
+            )
+    
+        action = action.reshape((-1, self.len_list))
+        enumerated_slate_actions = [
+            _
+            for _ in permutations(
+                np.arange(self.n_unique_action), self.len_list
+            )
+        ]
+        enumerated_slate_actions = np.array(enumerated_slate_actions)
+
+        behavior_policy_logit_ = self.behavior_policy_function(
+                context=context,
+                action_context=self.action_context,
+                random_state=self.random_state,
+            )
+
+        n_rounds = context.shape[0]
+        p_click_pi_0 = np.zeros((n_rounds, self.n_unique_action))
+        p_click_pi_e = np.zeros((n_rounds, self.n_unique_action))
+        p_click_factual_pi_0 = np.zeros(n_rounds * self.len_list)
+        p_click_factual_pi_e = np.zeros(n_rounds * self.len_list)
+        click_probability_factual_by_click_model = np.zeros(n_rounds * self.len_list)
+    
+        for i in np.arange(n_rounds):
+            is_deterministic = False
+            if context[i][0] <= self.deterministic_user_threshold:
+                is_deterministic = True
+
+            pscores_pi_0 = self._calc_pscore_given_policy_logit(
+                                    all_slate_actions=enumerated_slate_actions,
+                                    policy_logit_i_=behavior_policy_logit_[i],
+                                    is_deterministic=is_deterministic,
+                                )
+            
+            pscores_pi_e = self._calc_pscore_given_policy_logit_epsilon_greedy(
+                                all_slate_actions=enumerated_slate_actions,
+                                policy_logit_i_=evaluation_policy_logit_[i],
+                                eps=eps,
+                            )
+            
+            input_context = np.repeat(context[i].reshape(1,-1), enumerated_slate_actions.shape[0], axis=0)
+            X_test = np.concatenate([input_context, enumerated_slate_actions], axis=1)
+            
+            estimated_click_probability_i = self.reward_function(
+                context=context[i].reshape(1,-1),
+                action_context=self.action_context,
+                action=enumerated_slate_actions.flatten(),
+                action_interaction_weight_matrix=self.action_interaction_weight_matrix,
+                base_reward_function=self.base_reward_function,
+                reward_type=self.reward_type,
+                reward_structure=self.reward_structure,
+                len_list=self.len_list,
+                is_enumerated=True,
+                random_state=self.random_state,
+            )
+            estimated_click_probability_i *= (np.arange(self.len_list)+1)[::-1]
+            estimated_click_probability_i += self.random_.normal(loc=0.0, scale=noise, size=estimated_click_probability_i.shape)
+            estimated_click_probability_i = sigmoid(estimated_click_probability_i)/(np.arange(self.len_list)+1)
+
+            #p_click for all unique action
+            for a in np.arange(self.n_unique_action):
+                idx = np.where(enumerated_slate_actions==a)
+                q_x_c = estimated_click_probability_i[idx]
+
+                pi_0_A_x = pscores_pi_0[idx[0]]
+                pi_e_A_x = pscores_pi_e[idx[0]]
+
+                p_click_pi_0[i,a] = (pi_0_A_x*q_x_c).sum()
+                p_click_pi_e[i,a] = (pi_e_A_x*q_x_c).sum()
+            
+            p_click_factual_pi_0[i*self.len_list:i*self.len_list+self.len_list] = p_click_pi_0[i,action[i]]
+            p_click_factual_pi_e[i*self.len_list:i*self.len_list+self.len_list] = p_click_pi_e[i,action[i]]
+            
+            index = np.all(enumerated_slate_actions==action[i], axis=1)
+            click_probability_factual_by_click_model[i*self.len_list:i*self.len_list+self.len_list] = estimated_click_probability_i[np.where(index)[0]]
+
+        return p_click_factual_pi_0, p_click_factual_pi_e, p_click_pi_e, click_probability_factual_by_click_model
 
 
 
@@ -1897,7 +1852,6 @@ def generate_symmetric_matrix(n_unique_action: int, random_state: int) -> np.nda
 
     """
     random_ = check_random_state(random_state)
-    # base_matrix = random_.normal(scale=0.5, size=(n_unique_action, n_unique_action))
     base_matrix = random_.uniform(low=-3.0,high=3.0, size=(n_unique_action, n_unique_action))
     symmetric_matrix = (
         np.tril(base_matrix) + np.tril(base_matrix).T - np.diag(base_matrix.diagonal())
@@ -1921,12 +1875,10 @@ def generate_symmetric_matrix_conversion(n_unique_action: int, random_state: int
 
     """
     random_ = check_random_state(random_state)
-    # base_matrix = random_.normal(scale=0.5, size=(n_unique_action, n_unique_action))
     base_matrix = random_.uniform(low=-1.0,high=1.0, size=(n_unique_action, n_unique_action))
     symmetric_matrix = (
         np.tril(base_matrix) + np.tril(base_matrix).T - np.diag(base_matrix.diagonal())
     )
-    # print(symmetric_matrix)
     return symmetric_matrix
 
 
@@ -1934,63 +1886,17 @@ def action_interaction_reward_function(
     context: np.ndarray,
     action_context: np.ndarray,
     action: np.ndarray,
-    expected_reward: np.ndarray,
+    base_reward_function: Callable[[np.ndarray, np.ndarray], np.ndarray],
     reward_type: str,
     reward_structure: str,
     action_interaction_weight_matrix: np.ndarray,
     len_list: int,
     is_enumerated: bool = False,
     random_state: Optional[int] = None,
+    effect_from_ranking: float = 0.0,
     **kwargs,
 ) -> np.ndarray:
-    """Reward function incorporating interactions among combinatorial action
-
-    Parameters
-    -----------
-    context: array-like, shape (n_rounds, dim_context)
-        Context vectors characterizing each data (such as user information).
-
-    action_context: array-like, shape (n_unique_action, dim_action_context)
-        Vector representation of actions.
-
-    action: array-like, shape (n_rounds * len_list, ) or (len(enumerated_slate_actions) * len_list, )
-        When `is_enumerated`=False, action corresponds to actions sampled by a (often behavior) policy.
-        In this case, actions sampled within slate `i` is stored in `action[`i` * `len_list`: (`i + 1`) * `len_list`]`.
-        When `is_enumerated`=True, action corresponds to the enumerated all possible combinatorial actions.
-
-    base_reward_function: Callable[[np.ndarray, np.ndarray], np.ndarray]], default=None
-        Function to define the expected reward, i.e., :math:`q: \\mathcal{X} \\times \\mathcal{A} \\rightarrow \\mathbb{R}`.
-
-    reward_type: str, default='binary'
-        Type of reward variable, which must be either 'binary' or 'continuous'.
-        When 'binary',the expected rewards are transformed by logit function.
-
-    reward_structure: str
-        Reward structure.
-        Must be one of 'standard_additive', 'cascade_additive', 'standard_decay', or 'cascade_decay'.
-
-    action_interaction_weight_matrix (`W`): array-like, shape (n_unique_action, n_unique_action) or (len_list, len_list)
-        When using an additive-type reward_structure, `W(i, j)` defines the interaction between action `i` and `j`.
-        When using an decay-type reward_structure, `W(i, j)` defines the weight of how the expected reward of slot `i` affects that of slot `j`.
-        See the experiment section of Kiyohara et al.(2022) for details.
-
-    len_list: int (> 1)
-        Length of a list/ranking of actions, slate size.
-
-    is_enumerate: bool
-        Whether `action` corresponds to `enumerated_slate_actions`.
-
-    random_state: int, default=None
-        Controls the random seed in sampling dataset.
-
-    Returns
-    ---------
-    expected_reward_factual: array-like, shape (n_rounds, len_list)
-        When reward_structure='standard_additive', :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j \\neq k} W(a(k), a(j)))`.
-        When reward_structure='cascade_additive', :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j < k} W(a(k), a(j)))`.
-        Otherwise, :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j \\neq k} g^{-1}(f(x, a(j))) * W(k, j)`
-
-    """
+    
     check_array(array=context, name="context", expected_dim=2)
     check_array(array=action_context, name="action_context", expected_dim=2)
     check_array(array=action, name="action", expected_dim=1)
@@ -2049,11 +1955,10 @@ def action_interaction_reward_function(
     action_2d = action.reshape((-1, len_list)).astype("int8")
     n_enumerated_slate_actions = len(action) // n_rounds
     # expected_reward: array-like, shape (n_rounds, n_unique_action)
-    # expected_reward = base_reward_function(
-    #     context=context, action_context=action_context, random_state=random_state
-    # )
-    # if reward_type == "binary":
-    #     expected_reward = logit(expected_reward)
+    expected_reward = base_reward_function(
+        context=context, action_context=action_context, random_state=random_state
+    )
+
     expected_reward_factual = np.zeros_like(action_2d, dtype="float16")
     for pos_ in np.arange(len_list):
         tmp_fixed_reward = expected_reward[
@@ -2073,6 +1978,7 @@ def action_interaction_reward_function(
                 tmp_fixed_reward += distance*action_interaction_weight_matrix[
                     action_2d[:, pos_], action_2d[:, pos2_]
                 ]
+
         else:
             for pos2_ in np.arange(len_list):
                 if is_cascade:
@@ -2089,12 +1995,10 @@ def action_interaction_reward_function(
         expected_reward_factual[:, pos_] = tmp_fixed_reward
 
     if reward_type == "binary":
-        # expected_reward_factual /= len_list
         expected_reward_factual[:,:] = sigmoid(expected_reward_factual)/(np.arange(len_list)+1)
     else:
         expected_reward_factual /= np.arange(len_list)+1
-        # expected_reward_factual /= len_list
-        # expected_reward_factual = np.clip(expected_reward_factual, 0, None)
+
 
     assert expected_reward_factual.shape == (
         action_2d.shape[0],
@@ -2107,7 +2011,7 @@ def action_interaction_reward_function_conversion(
     context: np.ndarray,
     action_context: np.ndarray,
     action: np.ndarray,
-    expected_reward: np.ndarray,
+    base_reward_function: Callable[[np.ndarray, np.ndarray], np.ndarray],
     reward_type: str,
     reward_structure: str,
     action_interaction_weight_matrix: np.ndarray,
@@ -2117,54 +2021,7 @@ def action_interaction_reward_function_conversion(
     effect_from_ranking: float = 0.0,
     **kwargs,
 ) -> np.ndarray:
-    """Reward function incorporating interactions among combinatorial action
-
-    Parameters
-    -----------
-    context: array-like, shape (n_rounds, dim_context)
-        Context vectors characterizing each data (such as user information).
-
-    action_context: array-like, shape (n_unique_action, dim_action_context)
-        Vector representation of actions.
-
-    action: array-like, shape (n_rounds * len_list, ) or (len(enumerated_slate_actions) * len_list, )
-        When `is_enumerated`=False, action corresponds to actions sampled by a (often behavior) policy.
-        In this case, actions sampled within slate `i` is stored in `action[`i` * `len_list`: (`i + 1`) * `len_list`]`.
-        When `is_enumerated`=True, action corresponds to the enumerated all possible combinatorial actions.
-
-    base_reward_function: Callable[[np.ndarray, np.ndarray], np.ndarray]], default=None
-        Function to define the expected reward, i.e., :math:`q: \\mathcal{X} \\times \\mathcal{A} \\rightarrow \\mathbb{R}`.
-
-    reward_type: str, default='binary'
-        Type of reward variable, which must be either 'binary' or 'continuous'.
-        When 'binary',the expected rewards are transformed by logit function.
-
-    reward_structure: str
-        Reward structure.
-        Must be one of 'standard_additive', 'cascade_additive', 'standard_decay', or 'cascade_decay'.
-
-    action_interaction_weight_matrix (`W`): array-like, shape (n_unique_action, n_unique_action) or (len_list, len_list)
-        When using an additive-type reward_structure, `W(i, j)` defines the interaction between action `i` and `j`.
-        When using an decay-type reward_structure, `W(i, j)` defines the weight of how the expected reward of slot `i` affects that of slot `j`.
-        See the experiment section of Kiyohara et al.(2022) for details.
-
-    len_list: int (> 1)
-        Length of a list/ranking of actions, slate size.
-
-    is_enumerate: bool
-        Whether `action` corresponds to `enumerated_slate_actions`.
-
-    random_state: int, default=None
-        Controls the random seed in sampling dataset.
-
-    Returns
-    ---------
-    expected_reward_factual: array-like, shape (n_rounds, len_list)
-        When reward_structure='standard_additive', :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j \\neq k} W(a(k), a(j)))`.
-        When reward_structure='cascade_additive', :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j < k} W(a(k), a(j)))`.
-        Otherwise, :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j \\neq k} g^{-1}(f(x, a(j))) * W(k, j)`
-
-    """
+    
     check_array(array=context, name="context", expected_dim=2)
     check_array(array=action_context, name="action_context", expected_dim=2)
     check_array(array=action, name="action", expected_dim=1)
@@ -2224,34 +2081,19 @@ def action_interaction_reward_function_conversion(
     action_2d = action.reshape((-1, len_list)).astype("int8")
     n_enumerated_slate_actions = len(action) // n_rounds
     # expected_reward: array-like, shape (n_rounds, n_unique_action)
-    # expected_reward = base_reward_function(
-    #     context=context, action_context=action_context, random_state=random_state
-    # ) 
-    # print(expected_reward)
+    expected_reward = base_reward_function(
+        context=context, action_context=action_context, random_state=random_state
+    ) 
+
     if reward_type == "binary":
         # expected_reward = np.abs(expected_reward)
         expected_reward = logit(expected_reward)
     expected_reward_factual = np.zeros_like(action_2d, dtype="float16")
-    # print(action.shape)
-    # print(expected_reward.shape)
     for pos_ in np.arange(len_list):
-        # print(np.arange(len(action_2d)),action_2d[:, pos_])
-        # print(expected_reward.shape)
-        # print(action_2d.shape)
-        # print((np.arange(len(action_2d)) // n_enumerated_slate_actions).shape)
-        # print(np.arange(len(action_2d)) // n_enumerated_slate_actions)
-
-
         tmp_fixed_reward = expected_reward[
             np.arange(len(action_2d)) // n_enumerated_slate_actions,
             action_2d[:, pos_],
         ]
-        # print("-------------------",len(action_2d))
-        # print(np.arange(len(action_2d)) // n_enumerated_slate_actions,
-        #     action_2d[:, pos_])
-        # print(expected_reward[np.arange(10),action_2d[:, pos_]])
-        # print(tmp_fixed_reward)
-
         if reward_structure == "independent":
             pass
         elif is_additive:
@@ -2281,12 +2123,10 @@ def action_interaction_reward_function_conversion(
         expected_reward_factual[:, pos_] = tmp_fixed_reward
 
     if reward_type == "binary":
-        # expected_reward_factual /= len_list
         expected_reward_factual[:,:] = sigmoid(expected_reward_factual)
     else:
         expected_reward_factual *= 1 
-        # expected_reward_factual /= len_list
-        # expected_reward_factual = np.clip(expected_reward_factual, 0, None)
+
 
     assert expected_reward_factual.shape == (
         action_2d.shape[0],
@@ -2300,31 +2140,9 @@ def linear_behavior_policy_logit(
     context: np.ndarray,
     action_context: np.ndarray,
     random_state: Optional[int] = None,
-    tau: Union[int, float] = 1.0,
+    tau: Union[int, float] = -1.0,
 ) -> np.ndarray:
-    """Linear contextual behavior policy for synthetic slate bandit datasets.
-
-    Parameters
-    -----------
-    context: array-like, shape (n_rounds, dim_context)
-        Context vectors characterizing each data (such as user information).
-
-    action_context: array-like, shape (n_unique_action, dim_action_context)
-        Vector representation of actions.
-
-    random_state: int, default=None
-        Controls the random seed in sampling dataset.
-
-    tau: int or float, default=1.0
-        A temperature parameter to control the entropy of the behavior policy.
-        As :math:`\\tau \\rightarrow \\infty`, the algorithm will select arms uniformly at random.
-
-    Returns
-    ---------
-    logit value: array-like, shape (n_rounds, n_unique_action)
-        Logit values to define the behavior policy.
-
-    """
+    
     check_array(array=context, name="context", expected_dim=2)
     check_array(array=action_context, name="action_context", expected_dim=2)
     # check_scalar(tau, name="tau", target_type=(int, float), min_val=0)
@@ -2337,6 +2155,7 @@ def linear_behavior_policy_logit(
     for d in np.arange(action_context.shape[0]):
         logits[:, d] = context @ coef_ + action_context[d] @ action_coef_ 
         logits[:,d] += context_action_coef[:,d]
+
 
     return logits / tau
 

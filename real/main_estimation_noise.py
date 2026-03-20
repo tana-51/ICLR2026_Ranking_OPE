@@ -26,8 +26,8 @@ from obp.ope import(
     SlateRewardInteractionIPS as RIPS,
 )
 
-from dataset_real_deterministic import RealSlateBanditDataset
-from dataset import linear_behavior_policy_logit
+from dataset_real_modify import RealSlateBanditDataset
+from dataset_real_modify import linear_behavior_policy_logit
 from estimator import(
     ClickBasedIPS as CIPS,
     ClickBasedDR as CDR,
@@ -120,6 +120,9 @@ def main(cfg: DictConfig) -> None:
                 n_rounds=num_data,
                 # clip_logit_value=700.0,
             )
+            # print(validation_bandit_data["expected_reward_factual_conversion"])
+            # print(dataset.expected_reward_conversion[np.repeat(np.arange(num_data), dataset.len_list, axis=0), validation_bandit_data["action"]])
+            
             # print("action", validation_bandit_data["action"])
             # print("expected_reward_factual_conversion", validation_bandit_data["expected_reward_factual_conversion"])
             # print("expected_reward_factual_click", validation_bandit_data["expected_reward_factual_click"])
@@ -155,32 +158,32 @@ def main(cfg: DictConfig) -> None:
             #obtain regression model
             click_probability_true = validation_bandit_data["expected_reward_factual_click"] #p_c(x,a_A)
             ################################################
-            reg_model = RegressionModel(
-                n_actions=cfg.setting.real.n_unique_action, 
-                base_model=MLPRegressor(hidden_layer_sizes=(30,30,30), max_iter=3000,early_stopping=True,random_state=cfg.setting.real.random_state),
-            )
-            mask = (validation_bandit_data["reward_click"]==1)
-            reg_model.fit(
-                context=np.repeat(validation_bandit_data["context"], dataset.len_list, axis=0)[mask], # context; x
-                action=validation_bandit_data["action"][mask], # action; a
-                reward=validation_bandit_data["reward"][mask], # reward; r
-            )
-            # estimated_conversion (n_rounds*len_list, n_unique_actions, 1)
-            estimated_conversion = reg_model.predict(
-                context=np.repeat(validation_bandit_data["context"], dataset.len_list, axis=0)
-            )
+            # reg_model = RegressionModel(
+            #     n_actions=cfg.setting.real.n_unique_action, 
+            #     base_model=MLPRegressor(hidden_layer_sizes=(30,30,30), max_iter=3000,early_stopping=True,random_state=cfg.setting.real.random_state),
+            # )
+            # mask = (validation_bandit_data["reward_click"]==1)
+            # reg_model.fit(
+            #     context=np.repeat(validation_bandit_data["context"], dataset.len_list, axis=0)[mask], # context; x
+            #     action=validation_bandit_data["action"][mask], # action; a
+            #     reward=validation_bandit_data["reward"][mask], # reward; r
+            # )
+            # # estimated_conversion (n_rounds*len_list, n_unique_actions, 1)
+            # estimated_conversion = reg_model.predict(
+            #     context=np.repeat(validation_bandit_data["context"], dataset.len_list, axis=0)
+            # )
             
             # estimated_conversion_for_dm_term = reg_model.predict(
             #     context=validation_bandit_data["context"]
             # )[:,:,0]
-            estimated_conversion_for_dm_term = dataset.q_r + np.random.normal(loc=0,scale=estimation_noise, size=(dataset.q_r).shape)
-            # print("estimated_conversion", estimated_conversion.shape)
+            estimated_conversion_for_dm_term = dataset.expected_reward_conversion + np.random.normal(loc=0,scale=estimation_noise, size=(dataset.expected_reward_conversion).shape)
+            # print("estimated_conversion", estimated_conversion_for_dm_term)
             # estimated_conversion_factual = estimated_conversion[np.arange(dataset.len_list*validation_bandit_data["context"].shape[0]),validation_bandit_data["action"],0]
             #############
-            estimated_conversion_factual = validation_bandit_data["expected_reward_factual_conversion"] 
-            estimated_conversion_factual += + np.random.normal(loc=0,scale=estimation_noise, size=estimated_conversion_factual.shape)
+            # estimated_conversion_factual = validation_bandit_data["expected_reward_factual_conversion"] 
+            # estimated_conversion_factual += np.random.normal(loc=0,scale=estimation_noise, size=estimated_conversion_factual.shape)
             # #############
-            # estimated_conversion_factual = estimated_conversion_for_dm_term[np.repeat(np.arange(num_data), dataset.len_list, axis=0),validation_bandit_data["action"]]
+            estimated_conversion_factual = estimated_conversion_for_dm_term[np.repeat(np.arange(num_data), dataset.len_list, axis=0),validation_bandit_data["action"]]
 
             # print(estimated_conversion_factual.shape)
             estimated_CR_factual = click_probability_true * estimated_conversion_factual #true_click * estimated conversion
@@ -219,9 +222,9 @@ def main(cfg: DictConfig) -> None:
             ope = OffPolicyEvaluation(
                 bandit_feedback=validation_bandit_data,
                 ope_estimators=[
-                        # IPS(estimator_name="IPS", len_list=cfg.setting.real.len_list), 
-                        # IIPS(estimator_name="IIPS", len_list=cfg.setting.real.len_list),  
-                        # RIPS(estimator_name="RIPS", len_list=cfg.setting.real.len_list),
+                        IPS(estimator_name="IPS", len_list=cfg.setting.real.len_list), 
+                        IIPS(estimator_name="IIPS", len_list=cfg.setting.real.len_list),  
+                        RIPS(estimator_name="RIPS", len_list=cfg.setting.real.len_list),
                         CIPS(estimator_name="CIPS", len_list=cfg.setting.real.len_list),
                         CDR(estimator_name="CDR", len_list=cfg.setting.real.len_list),
                         CIPS(estimator_name="CIPS (estimate)", len_list=cfg.setting.real.len_list, use_estimated_click_model=True),
@@ -273,14 +276,20 @@ def main(cfg: DictConfig) -> None:
             ) ** 2
         result_df_list.append(result_df)
         print("max_iw", (evaluation_policy_pscore/ validation_bandit_data["pscore"]).max())
+        print("max_iw_CIPS", (evaluation_policy_p_click/ validation_bandit_data["p_click_factual_pi_0"]).max())
+        result_df = pd.concat(result_df_list).reset_index(level=0)
+        result_df.to_csv("estimation_noise.csv")
+        plot(vary_list=estimation_noise_list, result_df=result_df, variable_name="estimation_noise")
+        plot_normalize(vary_list=estimation_noise_list, result_df=result_df, variable_name="estimation_noise")
+
         tqdm.write("=====" * 15)
     
     result_df = pd.concat(result_df_list).reset_index(level=0)
     result_df.to_csv("estimation_noise.csv")
 
 
-    plot(vary_list=estimation_noise_list, result_df=result_df, variable_name="estimation_noise")
-    plot_normalize(vary_list=estimation_noise_list, result_df=result_df, variable_name="estimation_noise")
+    # plot(vary_list=estimation_noise_list, result_df=result_df, variable_name="estimation_noise")
+    # plot_normalize(vary_list=estimation_noise_list, result_df=result_df, variable_name="estimation_noise")
 
 if __name__ == "__main__":
     main()

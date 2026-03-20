@@ -2150,54 +2150,7 @@ def action_interaction_reward_function(
     effect_from_ranking: float = 0.0,
     **kwargs,
 ) -> np.ndarray:
-    """Reward function incorporating interactions among combinatorial action
-
-    Parameters
-    -----------
-    context: array-like, shape (n_rounds, dim_context)
-        Context vectors characterizing each data (such as user information).
-
-    action_context: array-like, shape (n_unique_action, dim_action_context)
-        Vector representation of actions.
-
-    action: array-like, shape (n_rounds * len_list, ) or (len(enumerated_slate_actions) * len_list, )
-        When `is_enumerated`=False, action corresponds to actions sampled by a (often behavior) policy.
-        In this case, actions sampled within slate `i` is stored in `action[`i` * `len_list`: (`i + 1`) * `len_list`]`.
-        When `is_enumerated`=True, action corresponds to the enumerated all possible combinatorial actions.
-
-    base_reward_function: Callable[[np.ndarray, np.ndarray], np.ndarray]], default=None
-        Function to define the expected reward, i.e., :math:`q: \\mathcal{X} \\times \\mathcal{A} \\rightarrow \\mathbb{R}`.
-
-    reward_type: str, default='binary'
-        Type of reward variable, which must be either 'binary' or 'continuous'.
-        When 'binary',the expected rewards are transformed by logit function.
-
-    reward_structure: str
-        Reward structure.
-        Must be one of 'standard_additive', 'cascade_additive', 'standard_decay', or 'cascade_decay'.
-
-    action_interaction_weight_matrix (`W`): array-like, shape (n_unique_action, n_unique_action) or (len_list, len_list)
-        When using an additive-type reward_structure, `W(i, j)` defines the interaction between action `i` and `j`.
-        When using an decay-type reward_structure, `W(i, j)` defines the weight of how the expected reward of slot `i` affects that of slot `j`.
-        See the experiment section of Kiyohara et al.(2022) for details.
-
-    len_list: int (> 1)
-        Length of a list/ranking of actions, slate size.
-
-    is_enumerate: bool
-        Whether `action` corresponds to `enumerated_slate_actions`.
-
-    random_state: int, default=None
-        Controls the random seed in sampling dataset.
-
-    Returns
-    ---------
-    expected_reward_factual: array-like, shape (n_rounds, len_list)
-        When reward_structure='standard_additive', :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j \\neq k} W(a(k), a(j)))`.
-        When reward_structure='cascade_additive', :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j < k} W(a(k), a(j)))`.
-        Otherwise, :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j \\neq k} g^{-1}(f(x, a(j))) * W(k, j)`
-
-    """
+    
     check_array(array=context, name="context", expected_dim=2)
     check_array(array=action_context, name="action_context", expected_dim=2)
     check_array(array=action, name="action", expected_dim=1)
@@ -2277,9 +2230,10 @@ def action_interaction_reward_function(
                 elif pos_ == pos2_:
                     continue
                 distance = 1 / np.abs(pos_ - pos2_)
-                tmp_fixed_reward += effect_from_ranking*distance*action_interaction_weight_matrix[
+                tmp_fixed_reward += distance*action_interaction_weight_matrix[
                     action_2d[:, pos_], action_2d[:, pos2_]
                 ]
+
         else:
             for pos2_ in np.arange(len_list):
                 if is_cascade:
@@ -2296,12 +2250,9 @@ def action_interaction_reward_function(
         expected_reward_factual[:, pos_] = tmp_fixed_reward
 
     if reward_type == "binary":
-        # expected_reward_factual /= len_list
         expected_reward_factual[:,:] = sigmoid(expected_reward_factual)/(np.arange(len_list)+1)
     else:
         expected_reward_factual /= np.arange(len_list)+1
-        # expected_reward_factual /= len_list
-        # expected_reward_factual = np.clip(expected_reward_factual, 0, None)
 
     assert expected_reward_factual.shape == (
         action_2d.shape[0],
@@ -2324,54 +2275,7 @@ def action_interaction_reward_function_conversion(
     effect_from_ranking: float = 0.0,
     **kwargs,
 ) -> np.ndarray:
-    """Reward function incorporating interactions among combinatorial action
-
-    Parameters
-    -----------
-    context: array-like, shape (n_rounds, dim_context)
-        Context vectors characterizing each data (such as user information).
-
-    action_context: array-like, shape (n_unique_action, dim_action_context)
-        Vector representation of actions.
-
-    action: array-like, shape (n_rounds * len_list, ) or (len(enumerated_slate_actions) * len_list, )
-        When `is_enumerated`=False, action corresponds to actions sampled by a (often behavior) policy.
-        In this case, actions sampled within slate `i` is stored in `action[`i` * `len_list`: (`i + 1`) * `len_list`]`.
-        When `is_enumerated`=True, action corresponds to the enumerated all possible combinatorial actions.
-
-    base_reward_function: Callable[[np.ndarray, np.ndarray], np.ndarray]], default=None
-        Function to define the expected reward, i.e., :math:`q: \\mathcal{X} \\times \\mathcal{A} \\rightarrow \\mathbb{R}`.
-
-    reward_type: str, default='binary'
-        Type of reward variable, which must be either 'binary' or 'continuous'.
-        When 'binary',the expected rewards are transformed by logit function.
-
-    reward_structure: str
-        Reward structure.
-        Must be one of 'standard_additive', 'cascade_additive', 'standard_decay', or 'cascade_decay'.
-
-    action_interaction_weight_matrix (`W`): array-like, shape (n_unique_action, n_unique_action) or (len_list, len_list)
-        When using an additive-type reward_structure, `W(i, j)` defines the interaction between action `i` and `j`.
-        When using an decay-type reward_structure, `W(i, j)` defines the weight of how the expected reward of slot `i` affects that of slot `j`.
-        See the experiment section of Kiyohara et al.(2022) for details.
-
-    len_list: int (> 1)
-        Length of a list/ranking of actions, slate size.
-
-    is_enumerate: bool
-        Whether `action` corresponds to `enumerated_slate_actions`.
-
-    random_state: int, default=None
-        Controls the random seed in sampling dataset.
-
-    Returns
-    ---------
-    expected_reward_factual: array-like, shape (n_rounds, len_list)
-        When reward_structure='standard_additive', :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j \\neq k} W(a(k), a(j)))`.
-        When reward_structure='cascade_additive', :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j < k} W(a(k), a(j)))`.
-        Otherwise, :math:`q_k(x, a) = g(g^{-1}(f(x, a(k))) + \\sum_{j \\neq k} g^{-1}(f(x, a(j))) * W(k, j)`
-
-    """
+    
     check_array(array=context, name="context", expected_dim=2)
     check_array(array=action_context, name="action_context", expected_dim=2)
     check_array(array=action, name="action", expected_dim=1)
@@ -2531,12 +2435,6 @@ def linear_behavior_policy_logit(
         logits[:, d] = context @ coef_ + action_context[d] @ action_coef_ 
         logits[:,d] += context_action_coef[:,d]
 
-    # logits = linear_reward_function(
-    #             context=context,
-    #             action_context=np.eye(6, dtype=int),
-    #             random_state=12345,
-    #         )
-    # print(logits.sum(axis=1))
     return logits / tau
 
 
